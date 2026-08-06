@@ -1,5 +1,8 @@
 name: RemoteDesk Build (self-contained)
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -160,6 +163,7 @@ jobs:
     strategy:
         fail-fast: false
     env:
+      project_path: WindowInjection/WindowInjection.vcxproj
       build_output_dir: RustDeskTempTopMostWindow/WindowInjection/x64/Release
     steps:
       - name: Add MSBuild to PATH
