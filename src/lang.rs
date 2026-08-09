@@ -127,15 +127,13 @@ fn resolve_lang(saved_lang: &str, locale: &str, cjk_fallback: bool) -> String {
         return "en".to_owned();
     }
     if lang.is_empty() {
-        // zh_CN on Linux, zh-Hans-CN on mac, zh_CN_#Hans on Android
-        if locale.starts_with("zh") {
-            lang = (if locale.contains("tw") {
-                "zh-tw"
-            } else {
-                "zh-cn"
-            })
-            .to_owned();
-        }
+        // 远控定制：默认简体中文（台湾地区保留繁体），用户可在设置中切换
+        lang = (if locale.contains("tw") {
+            "zh-tw"
+        } else {
+            "zh-cn"
+        })
+        .to_owned();
     }
     if lang.is_empty() {
         lang = locale
