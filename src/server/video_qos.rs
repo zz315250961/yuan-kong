@@ -43,9 +43,9 @@ const MAX_BR_MULTIPLE: f32 = 1.0;
 const HISTORY_DELAY_LEN: usize = 2;
 const ADJUST_RATIO_INTERVAL: usize = 3; // Adjust quality ratio every 3 seconds
 const DYNAMIC_SCREEN_THRESHOLD: usize = 2; // Allow increase quality ratio if encode more than 2 times in one second
-// 远控定制：延迟阈值从 150ms 放宽到 300ms（5G/中继路径常见 100~250ms，
-// 原阈值会导致帧率被压到 1fps）
-const DELAY_THRESHOLD_150MS: u32 = 300;
+// 远控定制：延迟阈值放宽到 600ms（5G/中继路径常见 200~600ms，
+// 原阈值会导致帧率被压到下限；保帧率、降画质更符合远控体验）
+const DELAY_THRESHOLD_150MS: u32 = 600;
 
 #[derive(Default, Debug, Clone)]
 struct UserDelay {
