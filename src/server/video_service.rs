@@ -1093,7 +1093,9 @@ fn check_change_scale(hardware: bool) -> ResultType<()> {
     }
     let screen_size = scrap::screen_size();
     let scale_soft = hbb_common::config::option2bool(SCALE_SOFT, &Config::get_option(SCALE_SOFT));
-    let half_scale = !hardware && scale_soft;
+    // 远控定制：安卓被控端无论硬件/软件编码都强制半分辨率采集，
+    // 对标 ToDesk/向日葵“牺牲画质换流畅”
+    let half_scale = scale_soft;
     log::info!("hardware: {hardware}, scale_soft: {scale_soft}, screen_size: {screen_size:?}",);
     scrap::android::call_main_service_set_by_name(
         "half_scale",

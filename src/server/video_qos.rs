@@ -29,7 +29,8 @@ delay:
 
 // Constants
 pub const FPS: u32 = 30;
-pub const MIN_FPS: u32 = 1;
+// 远控定制：帧率下限从 1 提高到 10，避免高延迟中继路径上画面变成幻灯片
+pub const MIN_FPS: u32 = 10;
 pub const MAX_FPS: u32 = 120;
 pub const INIT_FPS: u32 = 15;
 
@@ -42,7 +43,9 @@ const MAX_BR_MULTIPLE: f32 = 1.0;
 const HISTORY_DELAY_LEN: usize = 2;
 const ADJUST_RATIO_INTERVAL: usize = 3; // Adjust quality ratio every 3 seconds
 const DYNAMIC_SCREEN_THRESHOLD: usize = 2; // Allow increase quality ratio if encode more than 2 times in one second
-const DELAY_THRESHOLD_150MS: u32 = 150; // 150ms is the threshold for good network condition
+// 远控定制：延迟阈值从 150ms 放宽到 300ms（5G/中继路径常见 100~250ms，
+// 原阈值会导致帧率被压到 1fps）
+const DELAY_THRESHOLD_150MS: u32 = 300;
 
 #[derive(Default, Debug, Clone)]
 struct UserDelay {

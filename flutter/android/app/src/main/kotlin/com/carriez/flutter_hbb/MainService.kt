@@ -59,7 +59,8 @@ const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
 
 const val MAX_SCREEN_SIZE = 1200
 
-const val VIDEO_KEY_BIT_RATE = 1024_000
+// 远控定制：初始码率提高到 2Mbps（配合半分辨率，画质与流畅平衡）
+const val VIDEO_KEY_BIT_RATE = 2_000_000
 const val VIDEO_KEY_FRAME_RATE = 30
 
 class MainService : Service() {
