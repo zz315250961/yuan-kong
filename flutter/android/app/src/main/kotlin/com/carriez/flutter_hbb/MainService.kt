@@ -51,7 +51,9 @@ const val DEFAULT_NOTIFY_TEXT = "Service is running"
 const val DEFAULT_NOTIFY_ID = 1
 const val NOTIFY_ID_OFFSET = 100
 
-const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_VP9
+// 远控定制：安卓被控端改用 H.264（AVC）。绝大多数手机只有 H.264 硬件编码器，
+// 上游默认 VP9 只能软件编码，导致画面 1~2 秒一帧（WiFi 下也卡）。
+const val MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
 
 // video const
 
