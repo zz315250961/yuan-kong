@@ -288,6 +288,12 @@ impl Encoder {
                 // 4 Gb
                 auto_codec = CodecFormat::VP8
             }
+            // 远控定制：安卓上软件编码回退时优先 VP8（比 VP9 快 2~3 倍），
+            // 牺牲画质换流畅，对标 ToDesk/向日葵
+            #[cfg(target_os = "android")]
+            if vp8_useable {
+                auto_codec = CodecFormat::VP8
+            }
         }
 
         *format = match preference {

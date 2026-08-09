@@ -731,8 +731,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   List<TTextMenu> _getMobileActionMenus() {
-    if (gFFI.ffiModel.pi.platform != kPeerPlatformAndroid ||
-        !gFFI.ffiModel.keyboard) {
+    // 远控定制：控制安卓设备时，Back/Home/Apps 等按键在任意输入模式下都显示
+    // （原实现要求 keyboard 模式才显示，触屏模式下用户找不到返回键）
+    if (gFFI.ffiModel.pi.platform != kPeerPlatformAndroid) {
       return [];
     }
     final enabled = versionCmp(gFFI.ffiModel.pi.version, '1.2.7') >= 0;
