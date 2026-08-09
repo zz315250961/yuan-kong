@@ -1093,10 +1093,10 @@ fn check_change_scale(hardware: bool) -> ResultType<()> {
     }
     let screen_size = scrap::screen_size();
     let scale_soft = hbb_common::config::option2bool(SCALE_SOFT, &Config::get_option(SCALE_SOFT));
-    // 远控定制：仅「流畅模式」（image_quality=low）强制半分辨率采集；
-    // 均衡/高清模式恢复全分辨率，不牺牲画质
+    // 远控定制：流畅与均衡模式都强制半分辨率采集（实测全分辨率 HEVC 硬编
+    // 只有 4~14fps）；只有用户显式选择「好画质」(best) 才恢复全分辨率
     let quality = Config::get_option(hbb_common::config::keys::OPTION_IMAGE_QUALITY);
-    let half_scale = scale_soft && quality == "low";
+    let half_scale = scale_soft && quality != "best";
     log::info!("hardware: {hardware}, scale_soft: {scale_soft}, screen_size: {screen_size:?}",);
     scrap::android::call_main_service_set_by_name(
         "half_scale",
