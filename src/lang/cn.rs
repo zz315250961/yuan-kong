@@ -775,5 +775,9 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("whitelist_cidr_tip", "支持 CIDR 写法，例如 192.168.1.0/24"),
         ("Continue", "继续"),
         ("Browser didn't open? Use the url below to sign in.", ""),
+        ("Check for update", "检查更新"),
+        ("Checking for update...", "正在检查更新..."),
+        ("You are on the latest version", "已是最新版本"),
+        ("New version available", "发现新版本"),
     ].iter().cloned().collect();
 }

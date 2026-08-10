@@ -744,6 +744,37 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             ],
           ),
         SettingsSection(title: Text(translate("Settings")), tiles: [
+          SettingsTile(
+              title: Text(translate('Check for update')),
+              leading: Icon(Icons.system_update),
+              onPressed: (context) async {
+                showToast(translate('Checking for update...'));
+                bind.mainGetSoftwareUpdateUrl();
+                await Future.delayed(const Duration(seconds: 4));
+                final url = stateGlobal.updateUrl.value;
+                if (url.isEmpty) {
+                  showToast(translate('You are on the latest version'));
+                } else {
+                  final download = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: Text(translate('New version available')),
+                      content: Text(url),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: Text(translate('Cancel'))),
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: Text(translate('Download'))),
+                      ],
+                    ),
+                  );
+                  if (download == true) {
+                    await launchUrl(Uri.parse(url));
+                  }
+                }
+              }),
           if (!disabledSettings && !_hideNetwork && !_hideServer)
             SettingsTile(
                 title: Text(translate('ID/Relay Server')),
