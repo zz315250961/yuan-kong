@@ -721,6 +721,48 @@ fn run(vs: VideoService) -> ResultType<()> {
 
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
+
+        #[cfg(target_os = "android")]
+        if scrap::android::media_codec_mode() {
+            // 远控定制：Kotlin MediaCodec 直连硬编路径——直接发送已编码的 H.264 帧，
+            // 绕开 ffmpeg 封装（该路径在这台设备上只有 11~22fps）
+            let frames = scrap::android::take_encoded_frames();
+            if frames.is_empty() {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            let config = scrap::android::take_encoded_config();
+            let mut sent_config = false;
+            for ef in frames {
+                let mut evf = hbb_common::message_proto::EncodedVideoFrame::new();
+                let mut data = Vec::new();
+                if ef.key && !config.is_empty() && !sent_config {
+                    data.extend_from_slice(&config);
+                    sent_config = true;
+                }
+                data.extend_from_slice(&ef.data);
+                evf.set_data(data);
+                evf.set_key(ef.key);
+                evf.set_pts(ms);
+                let mut evfs = hbb_common::message_proto::EncodedVideoFrames::new();
+                evfs.frames.push(evf);
+                let mut vf = hbb_common::message_proto::VideoFrame::new();
+                vf.set_h264s(evfs);
+                vf.display = display_idx as _;
+                let mut msg = hbb_common::message_proto::Message::new();
+                msg.set_video_frame(vf);
+                recorder
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .map(|r| r.write_message(&msg, capture_width, capture_height));
+                sp.send_video_frame(msg);
+            }
+            *first_frame = false;
+            send_counter += 1;
+            continue;
+        }
+
         let res = match c.frame(spf) {
             Ok(frame) => {
                 repeat_encode_counter = 0;

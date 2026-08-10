@@ -61,7 +61,7 @@ const val MAX_SCREEN_SIZE = 1200
 
 // 远控定制：初始码率提高到 2Mbps（配合半分辨率，画质与流畅平衡）
 const val VIDEO_KEY_BIT_RATE = 2_000_000
-const val VIDEO_KEY_FRAME_RATE = 30
+const val VIDEO_KEY_FRAME_RATE = 60
 
 class MainService : Service() {
 
@@ -210,7 +210,9 @@ class MainService : Service() {
     }
 
     private val logTag = "LOG_SERVICE"
-    private val useVP9 = false
+    // 远控定制：启用 Kotlin 原生 MediaCodec 直连编码（H.264 硬编），
+    // 绕开 rustdesk ffmpeg 封装（该路径在这台设备上只有 11~22fps）
+    private val useVP9 = true
     private val binder = LocalBinder()
 
     private var reuseVirtualDisplay = Build.VERSION.SDK_INT > 33
@@ -536,7 +538,8 @@ class MainService : Service() {
         videoEncoder?.let {
             surface = it.createInputSurface()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                surface!!.setFrameRate(1F, FRAME_RATE_COMPATIBILITY_DEFAULT)
+                // 远控定制：原为 1F（会把虚拟显示器锁死在 1fps），改为 60F
+                surface!!.setFrameRate(60F, FRAME_RATE_COMPATIBILITY_DEFAULT)
             }
             it.setCallback(cb)
             it.start()
@@ -567,7 +570,21 @@ class MainService : Service() {
 
     private val cb: MediaCodec.Callback = object : MediaCodec.Callback() {
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {}
-        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {}
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            // 提取 SPS/PPS（csd-0/csd-1），转 Annex B 格式发给控制端
+            val csd0 = format.getByteBuffer("csd-0")
+            val csd1 = format.getByteBuffer("csd-1")
+            if (csd0 != null && csd1 != null) {
+                val n0 = csd0.remaining()
+                val n1 = csd1.remaining()
+                val config = ByteBuffer.allocate(4 + n0 + 4 + n1)
+                config.put(byteArrayOf(0, 0, 0, 1))
+                config.put(csd0)
+                config.put(byteArrayOf(0, 0, 0, 1))
+                config.put(csd1)
+                FFI.onEncodedVideoConfig(config.array())
+            }
+        }
 
         override fun onOutputBufferAvailable(
             codec: MediaCodec,
@@ -575,12 +592,11 @@ class MainService : Service() {
             info: MediaCodec.BufferInfo
         ) {
             codec.getOutputBuffer(index)?.let { buf ->
-                sendVP9Thread.execute {
-                    val byteArray = ByteArray(buf.limit())
-                    buf.get(byteArray)
-                    // sendVp9(byteArray)
-                    codec.releaseOutputBuffer(index, false)
-                }
+                val byteArray = ByteArray(info.size)
+                buf.get(byteArray)
+                val key = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+                FFI.onEncodedVideoFrame(byteArray, key)
+                codec.releaseOutputBuffer(index, false)
             }
         }
 
