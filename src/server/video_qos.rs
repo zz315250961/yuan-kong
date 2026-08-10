@@ -324,15 +324,13 @@ impl VideoQoS {
                 user.delay.quick_increase_fps_count = 0;
             }
 
-            #[cfg(target_os = "android")]
-            {
-                // 远控定制：安卓目标 60fps（延迟只影响画质/码率，对标 ToDesk）
-                fps = 60.min(MAX_FPS);
-            }
-            #[cfg(target_os = "android")]
-            fps = fps.clamp(MIN_FPS, 60.min(MAX_FPS));
-            #[cfg(not(target_os = "android"))]
-            fps = fps.clamp(MIN_FPS, highest_fps);
+            // 远控定制：安卓目标 60fps（延迟只影响画质/码率，对标 ToDesk）
+            let upper_fps = if cfg!(target_os = "android") {
+                60.min(MAX_FPS)
+            } else {
+                highest_fps
+            };
+            fps = fps.clamp(MIN_FPS, upper_fps);
             // first network delay message
             adjust_ratio = user.delay.fps.is_none();
             user.delay.fps = Some(fps);
