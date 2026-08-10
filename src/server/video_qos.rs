@@ -324,6 +324,13 @@ impl VideoQoS {
                 user.delay.quick_increase_fps_count = 0;
             }
 
+            #[cfg(target_os = "android")]
+            {
+                // 远控定制：安卓保持高帧率（延迟只影响画质/码率，对标 ToDesk）。
+                // 原逻辑把编码耗时算进延迟，导致帧率被压在最低档 12fps，
+                // 表现为“控制秒控、画面卡顿”。
+                fps = highest_fps;
+            }
             fps = fps.clamp(MIN_FPS, highest_fps);
             // first network delay message
             adjust_ratio = user.delay.fps.is_none();
