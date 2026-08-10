@@ -268,6 +268,11 @@ impl Encoder {
             .unwrap_or((PreferCodec::Auto.into(), 0));
         let preference = most_frequent.enum_value_or(PreferCodec::Auto);
 
+        // 远控定制：安卓被控端强制 VP8 编码（该设备 ffmpeg HEVC 硬编路径实测
+        // 只有 11~22fps；VP8 软件编码在 540p 下更快）。后续根据实测结果调整
+        #[cfg(target_os = "android")]
+        let preference = PreferCodec::VP8;
+
         // auto: h265 > h264 > av1/vp9/vp8
         let av1_test = Config::get_option(hbb_common::config::keys::OPTION_AV1_TEST) != "N";
         let mut auto_codec = if av1_useable && av1_test {
