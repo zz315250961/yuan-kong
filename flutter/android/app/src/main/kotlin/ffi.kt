@@ -18,6 +18,8 @@ object FFI {
     external fun startServer(app_dir: String, custom_client_config: String)
     external fun startService()
     external fun onVideoFrameUpdate(buf: ByteBuffer)
+    external fun onEncodedVideoConfig(data: ByteArray)
+    external fun onEncodedVideoFrame(data: ByteArray, key: Boolean)
     external fun onAudioFrameUpdate(buf: ByteBuffer)
     external fun translateLocale(localeName: String, input: String): String
     external fun refreshScreen()
