@@ -734,18 +734,22 @@ fn run(vs: VideoService) -> ResultType<()> {
             let config = scrap::android::take_encoded_config();
             let mut sent_config = false;
             for ef in frames {
-                let mut evf = hbb_common::message_proto::EncodedVideoFrame::new();
                 let mut data = Vec::new();
                 if ef.key && !config.is_empty() && !sent_config {
                     data.extend_from_slice(&config);
                     sent_config = true;
                 }
                 data.extend_from_slice(&ef.data);
-                evf.set_data(data);
-                evf.set_key(ef.key);
-                evf.set_pts(ms);
-                let mut evfs = hbb_common::message_proto::EncodedVideoFrames::new();
-                evfs.frames.push(evf);
+                let evf = hbb_common::message_proto::EncodedVideoFrame {
+                    data: hbb_common::bytes::Bytes::from(data),
+                    key: ef.key,
+                    pts: ms,
+                    ..Default::default()
+                };
+                let evfs = hbb_common::message_proto::EncodedVideoFrames {
+                    frames: vec![evf].into(),
+                    ..Default::default()
+                };
                 let mut vf = hbb_common::message_proto::VideoFrame::new();
                 vf.set_h264s(evfs);
                 vf.display = display_idx as _;
@@ -758,7 +762,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                     .map(|r| r.write_message(&msg, capture_width, capture_height));
                 sp.send_video_frame(msg);
             }
-            *first_frame = false;
+            first_frame = false;
             send_counter += 1;
             continue;
         }
