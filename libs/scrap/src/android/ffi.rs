@@ -1,8 +1,8 @@
 use jni::objects::JByteBuffer;
+use jni::objects::JByteArray;
 use jni::objects::JString;
 use jni::objects::JValue;
 use jni::sys::jboolean;
-use jni::sys::jbyteArray;
 use jni::JNIEnv;
 use jni::{
     objects::{GlobalRef, JClass, JObject},
@@ -150,9 +150,9 @@ pub extern "system" fn Java_ffi_FFI_onVideoFrameUpdate(
 pub extern "system" fn Java_ffi_FFI_onEncodedVideoConfig(
     env: JNIEnv,
     _class: JClass,
-    data: jbyteArray,
+    data: JByteArray,
 ) {
-    if let Ok(bytes) = env.convert_byte_array(data) {
+    if let Ok(bytes) = env.convert_byte_array(&data) {
         *ENCODED_CONFIG.lock().unwrap() = bytes;
     }
 }
@@ -161,10 +161,10 @@ pub extern "system" fn Java_ffi_FFI_onEncodedVideoConfig(
 pub extern "system" fn Java_ffi_FFI_onEncodedVideoFrame(
     env: JNIEnv,
     _class: JClass,
-    data: jbyteArray,
+    data: JByteArray,
     key: jboolean,
 ) {
-    if let Ok(bytes) = env.convert_byte_array(data) {
+    if let Ok(bytes) = env.convert_byte_array(&data) {
         if let Ok(mut q) = ENCODED_FRAMES.lock() {
             if q.len() < 300 {
                 q.push_back(EncodedFrame {

@@ -558,6 +558,10 @@ class ServerInfo extends StatelessWidget {
                           onPressed: () => bind.mainUpdateTemporaryPassword()),
                       IconButton(
                           visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.lock_outline),
+                          onPressed: () => setPasswordDialog()),
+                      IconButton(
+                          visualDensity: VisualDensity.compact,
                           icon: Icon(Icons.copy_outlined),
                           onPressed: () {
                             copyToClipboard(
