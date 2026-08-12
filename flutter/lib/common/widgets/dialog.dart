@@ -127,6 +127,8 @@ void changeIdDialog() {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(translate("id_change_tip")),
+          Text('格式：6-16 位，字母开头，可包含字母、数字、-_',
+              style: const TextStyle(fontSize: 12, color: Colors.grey)),
           const SizedBox(
             height: 12.0,
           ),

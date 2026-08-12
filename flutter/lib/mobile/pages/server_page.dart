@@ -530,6 +530,10 @@ class ServerInfo extends StatelessWidget {
               ),
               IconButton(
                   visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit),
+                  onPressed: () => changeIdDialog()),
+              IconButton(
+                  visualDensity: VisualDensity.compact,
                   icon: Icon(Icons.copy_outlined),
                   onPressed: () {
                     copyToClipboard(model.serverId.value.text.trim());
@@ -558,7 +562,7 @@ class ServerInfo extends StatelessWidget {
                           onPressed: () => bind.mainUpdateTemporaryPassword()),
                       IconButton(
                           visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.lock_outline),
+                          icon: const Icon(Icons.edit),
                           onPressed: () => setPasswordDialog()),
                       IconButton(
                           visualDensity: VisualDensity.compact,
