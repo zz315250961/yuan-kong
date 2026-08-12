@@ -631,6 +631,8 @@ class LoginWidgetOP extends StatelessWidget {
 class LoginWidgetUserPass extends StatelessWidget {
   final TextEditingController username;
   final TextEditingController pass;
+  final String? usernameTitle;
+  final Widget? usernamePrefixIcon;
   final String? usernameMsg;
   final String? passMsg;
   final bool isInProgress;
@@ -642,6 +644,8 @@ class LoginWidgetUserPass extends StatelessWidget {
     this.userFocusNode,
     required this.username,
     required this.pass,
+    this.usernameTitle,
+    this.usernamePrefixIcon,
     required this.usernameMsg,
     required this.passMsg,
     required this.isInProgress,
@@ -658,10 +662,11 @@ class LoginWidgetUserPass extends StatelessWidget {
           children: [
             const SizedBox(height: 8.0),
             DialogTextField(
-                title: translate(DialogTextField.kUsernameTitle),
+                title: usernameTitle ?? translate(DialogTextField.kUsernameTitle),
                 controller: username,
                 focusNode: userFocusNode,
-                prefixIcon: DialogTextField.kUsernameIcon,
+                prefixIcon: usernamePrefixIcon ?? DialogTextField.kUsernameIcon,
+                keyboardType: TextInputType.emailAddress,
                 errorText: usernameMsg),
             PasswordWidget(
               controller: pass,
@@ -693,6 +698,63 @@ class LoginWidgetUserPass extends StatelessWidget {
             ])),
           ],
         ));
+  }
+}
+
+class _ThirdPartyLoginButtons extends StatelessWidget {
+  final VoidCallback? onQqEmail;
+  const _ThirdPartyLoginButtons({Key? key, this.onQqEmail}) : super(key: key);
+
+  Widget _buildButton(
+      BuildContext context, IconData icon, String label, VoidCallback? onPressed) {
+    final bgColor = Theme.of(context).colorScheme.surfaceVariant;
+    final fgColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      height: 36,
+      width: 200,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: bgColor,
+          foregroundColor: fgColor,
+        ).copyWith(elevation: ButtonStyleButton.allOrNull(0.0)),
+        onPressed: onPressed,
+        child: Row(
+          children: [
+            SizedBox(
+              width: 30,
+              child: Icon(icon, size: 18),
+            ),
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Center(child: Text(label)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _buildButton(
+          context,
+          Icons.chat_bubble_outline,
+          '微信登录（预留）',
+          () => showToast('微信登录即将上线，敬请期待'),
+        ),
+        const Divider(indent: 5, endIndent: 5),
+        _buildButton(
+          context,
+          Icons.alternate_email,
+          'QQ邮箱登录',
+          onQqEmail,
+        ),
+      ],
+    );
   }
 }
 
@@ -733,24 +795,6 @@ Future<bool?> _openLoginDialog() async {
   final curOP = oidcAuth.curOP;
   // Track hover state for the close icon
   bool isCloseHovered = false;
-
-  final loginOptions = [].obs;
-  final loginOptionsError = Rxn<Object>();
-  final loginOptionsInProgress = false.obs;
-  fetchLoginOptions() async {
-    loginOptionsInProgress.value = true;
-    try {
-      loginOptions.value = await UserModel.queryOidcLoginOptions();
-      loginOptionsError.value = null;
-    } catch (e) {
-      debugPrint("queryOidcLoginOptions failed: $e");
-      loginOptionsError.value = e;
-    } finally {
-      loginOptionsInProgress.value = false;
-    }
-  }
-
-  Future.delayed(Duration.zero, fetchLoginOptions);
 
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
     username.addListener(() {
@@ -856,81 +900,25 @@ Future<bool?> _openLoginDialog() async {
       setState(() => isInProgress = false);
     }
 
-    thirdAuthWidget() => Obx(() {
-          final error = loginOptionsError.value;
-          final inProgress = loginOptionsInProgress.value;
-          if (error != null) {
-            return Column(
-              children: [
-                const SizedBox(height: 8.0),
-                // NOT use Offstage to wrap LinearProgressIndicator
-                if (inProgress) const LinearProgressIndicator(),
-                if (!inProgress && error is! RequestException)
-                  Text(
-                    translate('network_error_tip'),
-                    style: const TextStyle(fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.primary,
-                  ),
-                  onPressed: inProgress ? null : fetchLoginOptions,
-                  child: Text(translate('Retry')),
-                ),
-                if (!inProgress)
-                  SelectableText(
-                    error.toString(),
-                    style: const TextStyle(fontSize: 11, color: Colors.red),
-                    textAlign: TextAlign.center,
-                  ),
-              ],
-            );
-          }
-          return Offstage(
-            offstage: loginOptions.isEmpty,
-            child: Column(
-              children: [
-                const SizedBox(
-                  height: 8.0,
-                ),
-                Center(
-                    child: Text(
-                  translate('or'),
-                  style: TextStyle(fontSize: 16),
-                )),
-                const SizedBox(
-                  height: 8.0,
-                ),
-                LoginWidgetOP(
-                  ops: loginOptions
-                      .map((e) => ConfigOP(op: e['name'], icon: e['icon']))
-                      .toList(),
-                  curOP: curOP,
-                  startAuth: oidcAuth.start,
-                  cancelAuth: oidcAuth.cancelCurrent,
-                  canStartAuth: oidcAuth.canStart,
-                  cbLogin: (Map<String, dynamic> authBody) async {
-                    LoginResponse? resp;
-                    try {
-                      // access_token is already stored in the rust side.
-                      resp =
-                          gFFI.userModel.getLoginResponseFromAuthBody(authBody);
-                    } catch (e) {
-                      debugPrint(
-                          'Failed to parse oidc login body: "$authBody"');
-                    }
-                    close(true);
-
-                    if (resp != null) {
-                      handleLoginResponse(resp, false, null);
-                    }
-                  },
-                ),
-              ],
+    thirdAuthWidget() => Column(
+          children: [
+            const SizedBox(
+              height: 8.0,
             ),
-          );
-        });
+            Center(
+                child: Text(
+              translate('or'),
+              style: TextStyle(fontSize: 16),
+            )),
+            const SizedBox(
+              height: 8.0,
+            ),
+            _ThirdPartyLoginButtons(onQqEmail: () {
+              userFocusNode.requestFocus();
+              showToast('请使用 QQ 邮箱和密码登录');
+            }),
+          ],
+        );
 
     final title = Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -978,12 +966,28 @@ Future<bool?> _openLoginDialog() async {
           LoginWidgetUserPass(
             username: username,
             pass: password,
+            usernameTitle: translate('Email'),
+            usernamePrefixIcon: Icon(Icons.email_outlined),
             usernameMsg: usernameMsg,
             passMsg: passwordMsg,
             isInProgress: isInProgress,
             curOP: curOP,
             onLogin: onLogin,
             userFocusNode: userFocusNode,
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.primary,
+            ),
+            onPressed: isInProgress || curOP.value.isNotEmpty
+                ? null
+                : () async {
+                    final registered = await registerDialog();
+                    if (registered == true) {
+                      close(true);
+                    }
+                  },
+            child: Text(translate('Register')),
           ),
           thirdAuthWidget(),
         ],
@@ -997,6 +1001,120 @@ Future<bool?> _openLoginDialog() async {
     await UserModel.updateOtherModels();
   }
 
+  return res;
+}
+
+Future<bool?> registerDialog() async {
+  var email = TextEditingController();
+  var password = TextEditingController();
+  var confirmPassword = TextEditingController();
+  final emailFocusNode = FocusNode()..requestFocus();
+  Timer(Duration(milliseconds: 100), () => emailFocusNode.requestFocus());
+
+  String? emailMsg;
+  String? passwordMsg;
+  String? confirmMsg;
+  var isInProgress = false;
+
+  final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
+    email.addListener(() {
+      if (emailMsg != null) {
+        setState(() => emailMsg = null);
+      }
+    });
+    password.addListener(() {
+      if (passwordMsg != null) {
+        setState(() => passwordMsg = null);
+      }
+    });
+    confirmPassword.addListener(() {
+      if (confirmMsg != null) {
+        setState(() => confirmMsg = null);
+      }
+    });
+
+    onRegister() async {
+      if (isInProgress) {
+        return;
+      }
+      final e = email.text.trim();
+      if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(e)) {
+        setState(() => emailMsg = '请输入正确的邮箱地址');
+        return;
+      }
+      if (password.text.length < 4) {
+        setState(() => passwordMsg = '密码至少 4 位');
+        return;
+      }
+      if (password.text != confirmPassword.text) {
+        setState(() => confirmMsg = '两次输入的密码不一致');
+        return;
+      }
+      setState(() => isInProgress = true);
+      try {
+        final resp = await gFFI.userModel.register(LoginRequest(
+            username: e,
+            password: password.text,
+            id: await bind.mainGetMyId(),
+            uuid: await bind.mainGetUuid(),
+            autoLogin: true,
+            type: HttpType.kAuthReqTypeAccount));
+        if (resp.access_token != null) {
+          await bind.mainSetLocalOption(
+              key: 'access_token', value: resp.access_token!);
+          await bind.mainSetLocalOption(
+              key: 'user_info', value: jsonEncode(resp.user ?? {}));
+          close(true);
+          return;
+        }
+        setState(() => passwordMsg = '注册失败，请重试');
+      } on RequestException catch (err) {
+        setState(() => emailMsg = translate(err.cause));
+      } catch (err) {
+        debugPrint('register failed: $err');
+        setState(() => emailMsg = '网络错误，请检查网络后重试');
+      }
+      setState(() => isInProgress = false);
+    }
+
+    return CustomAlertDialog(
+      title: Text(translate('Register')),
+      contentBoxConstraints: BoxConstraints(maxWidth: 300),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DialogTextField(
+              title: translate('Email'),
+              controller: email,
+              focusNode: emailFocusNode,
+              prefixIcon: Icon(Icons.email_outlined),
+              keyboardType: TextInputType.emailAddress,
+              errorText: emailMsg),
+          DialogTextField(
+              title: translate('Password'),
+              controller: password,
+              obscureText: true,
+              prefixIcon: DialogTextField.kPasswordIcon,
+              errorText: passwordMsg),
+          DialogTextField(
+              title: translate('Confirm password'),
+              controller: confirmPassword,
+              obscureText: true,
+              prefixIcon: DialogTextField.kPasswordIcon,
+              errorText: confirmMsg),
+          // NOT use Offstage to wrap LinearProgressIndicator
+          if (isInProgress) const LinearProgressIndicator(),
+        ],
+      ),
+      onCancel: close,
+      onSubmit: isInProgress ? null : onRegister,
+      actions: [
+        dialogButton(translate('Cancel'), onPressed: close, isOutline: true),
+        dialogButton(
+            translate('Register'), onPressed: isInProgress ? null : onRegister),
+      ],
+    );
+  });
   return res;
 }
 

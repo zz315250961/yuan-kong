@@ -191,15 +191,25 @@ class UserModel {
 
   /// throw [RequestException]
   Future<LoginResponse> login(LoginRequest loginRequest) async {
+    return _postAuth('/api/login', loginRequest);
+  }
+
+  /// throw [RequestException]
+  Future<LoginResponse> register(LoginRequest loginRequest) async {
+    return _postAuth('/api/register', loginRequest);
+  }
+
+  Future<LoginResponse> _postAuth(
+      String path, LoginRequest loginRequest) async {
     final url = await bind.mainGetApiServer();
-    final resp = await http.post(Uri.parse('$url/api/login'),
+    final resp = await http.post(Uri.parse('$url$path'),
         body: jsonEncode(loginRequest.toJson()));
 
     final Map<String, dynamic> body;
     try {
       body = jsonDecode(decode_http_response(resp));
     } catch (e) {
-      debugPrint("login: jsonDecode resp body failed: ${e.toString()}");
+      debugPrint("post auth $path: jsonDecode resp body failed: ${e.toString()}");
       if (resp.statusCode != 200) {
         BotToast.showText(
             contentColor: Colors.red, text: 'HTTP ${resp.statusCode}');
