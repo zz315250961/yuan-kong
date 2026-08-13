@@ -1094,7 +1094,17 @@ fn get_api_server_(api: String, custom: String) -> String {
     if !api.is_empty() {
         return api.to_owned();
     }
-    let s0 = get_custom_rendezvous_server(custom);
+    let mut s0 = get_custom_rendezvous_server(custom);
+    if s0.is_empty() {
+        // 自建服务器定制：客户端内置的中继服务器只驱动连接，不参与 API 地址
+        // 解析，导致账号请求落到官方 admin.rustdesk.com（发码报网络错误、
+        // 登录返回官方英文提示）。这里按实际连接服务器推导 API 端口
+        // （RENDEZVOUS_PORT-2 = 21114）。
+        let rv = Config::get_rendezvous_server();
+        if !rv.is_empty() && !is_public(&rv) {
+            s0 = rv;
+        }
+    }
     if !s0.is_empty() {
         let s = crate::increase_port(&s0, -2);
         if s == s0 {
