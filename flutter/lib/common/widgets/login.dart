@@ -758,6 +758,346 @@ class _ThirdPartyLoginButtons extends StatelessWidget {
   }
 }
 
+const kCommonEmailDomains = [
+  'qq.com',
+  '163.com',
+  '126.com',
+  'foxmail.com',
+  'gmail.com',
+  'outlook.com',
+  'hotmail.com',
+  '139.com',
+  'sina.com',
+  'sohu.com',
+  '189.cn',
+  'yeah.net',
+];
+
+void _applyEmailDomain(TextEditingController ctrl, String domain) {
+  if (domain.isEmpty) {
+    return;
+  }
+  final text = ctrl.text.trim();
+  final at = text.indexOf('@');
+  ctrl.text = at < 0 ? '$text@$domain' : '${text.substring(0, at)}@$domain';
+}
+
+bool _isValidEmail(String email) =>
+    RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email.trim());
+
+/// 邮箱+验证码+密码 的通用表单（注册 / 忘记密码 / 更换绑定邮箱共用）。
+/// 验证码发送按钮自带 60 秒倒计时，倒计时状态由本组件内部管理，安全销毁。
+class _AccountForm extends StatefulWidget {
+  final String emailPurpose; // register | reset | change_email
+  final bool needCurrentPassword;
+  final bool needNewPassword;
+  final bool needConfirmPassword;
+  final String emailTitle;
+  final String? emailHelperText;
+  final String newPasswordLabel;
+  final String submitLabel;
+  final Future<String?> Function({
+    required String email,
+    required String code,
+    required String password,
+  }) onSubmit;
+  final VoidCallback onSuccess;
+
+  const _AccountForm({
+    Key? key,
+    required this.emailPurpose,
+    this.needCurrentPassword = false,
+    this.needNewPassword = true,
+    this.needConfirmPassword = true,
+    this.emailTitle = 'Email',
+    this.emailHelperText,
+    required this.newPasswordLabel,
+    required this.submitLabel,
+    required this.onSubmit,
+    required this.onSuccess,
+  }) : super(key: key);
+
+  @override
+  State<_AccountForm> createState() => _AccountFormState();
+}
+
+class _AccountFormState extends State<_AccountForm> {
+  final _email = TextEditingController();
+  final _code = TextEditingController();
+  final _currentPassword = TextEditingController();
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+  final _emailFocusNode = FocusNode()..requestFocus();
+
+  String? _emailError;
+  String? _codeError;
+  String? _currentPasswordError;
+  String? _passwordError;
+  String? _confirmError;
+  bool _isInProgress = false;
+  bool _sendingCode = false;
+  int _countdown = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    Timer(const Duration(milliseconds: 100), () => _emailFocusNode.requestFocus());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _email.dispose();
+    _code.dispose();
+    _currentPassword.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    _emailFocusNode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendCode() async {
+    final email = _email.text.trim();
+    if (!_isValidEmail(email)) {
+      setState(() => _emailError = '请输入正确的邮箱地址');
+      return;
+    }
+    setState(() {
+      _sendingCode = true;
+      _emailError = null;
+      _codeError = null;
+    });
+    try {
+      await gFFI.userModel.sendCode(email, widget.emailPurpose);
+      if (!mounted) return;
+      setState(() {
+        _sendingCode = false;
+        _countdown = 60;
+      });
+      _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        setState(() {
+          _countdown--;
+          if (_countdown <= 0) {
+            t.cancel();
+            _countdown = 0;
+          }
+        });
+      });
+    } on RequestException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _sendingCode = false;
+        _codeError = translate(err.cause);
+      });
+    } catch (err) {
+      debugPrint('send code failed: $err');
+      if (!mounted) return;
+      setState(() {
+        _sendingCode = false;
+        _codeError = '网络错误，请检查网络后重试';
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_isInProgress) {
+      return;
+    }
+    final email = _email.text.trim();
+    final code = _code.text.trim();
+    final currentPassword = _currentPassword.text;
+    final password = _password.text;
+    final confirm = _confirm.text;
+    if (!_isValidEmail(email)) {
+      setState(() => _emailError = '请输入正确的邮箱地址');
+      return;
+    }
+    if (widget.needCurrentPassword && currentPassword.isEmpty) {
+      setState(() => _currentPasswordError = '请输入当前密码');
+      return;
+    }
+    if (code.isEmpty) {
+      setState(() => _codeError = '请输入验证码');
+      return;
+    }
+    if (widget.needNewPassword && password.length < 4) {
+      setState(() => _passwordError = '密码至少 4 位');
+      return;
+    }
+    if (widget.needConfirmPassword && password != confirm) {
+      setState(() => _confirmError = '两次输入的密码不一致');
+      return;
+    }
+    setState(() {
+      _isInProgress = true;
+      _emailError = null;
+      _codeError = null;
+      _currentPasswordError = null;
+      _passwordError = null;
+      _confirmError = null;
+    });
+    try {
+      final error = await widget.onSubmit(
+        email: email,
+        code: code,
+        password: widget.needCurrentPassword ? currentPassword : password,
+      );
+      if (!mounted) return;
+      if (error == null) {
+        widget.onSuccess();
+        return;
+      }
+      setState(() {
+        _isInProgress = false;
+        _codeError = error;
+      });
+    } on RequestException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _isInProgress = false;
+        _codeError = translate(err.cause);
+      });
+    } catch (err) {
+      debugPrint('account form submit failed: $err');
+      if (!mounted) return;
+      setState(() {
+        _isInProgress = false;
+        _codeError = '网络错误，请检查网络后重试';
+      });
+    }
+  }
+
+  Widget _buildDomainDropdown() {
+    return PopupMenuButton<String>(
+      tooltip: translate('Email'),
+      icon: const Icon(Icons.arrow_drop_down_circle_outlined),
+      onSelected: (domain) => _applyEmailDomain(_email, domain),
+      itemBuilder: (context) => [
+        for (final domain in kCommonEmailDomains)
+          PopupMenuItem<String>(
+            value: domain,
+            child: Text('@$domain'),
+          ),
+        const PopupMenuItem<String>(
+          value: '',
+          child: Text('@其他邮箱'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSendCodeButton() {
+    final enabled = !_sendingCode && _countdown == 0;
+    return SizedBox(
+      height: 48,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+        onPressed: enabled ? _sendCode : null,
+        child: Text(
+          _sendingCode
+              ? translate('Waiting')
+              : _countdown > 0
+                  ? '${_countdown}s'
+                  : translate('Send code'),
+          style: const TextStyle(fontSize: 13),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: DialogTextField(
+                title: translate(widget.emailTitle),
+                controller: _email,
+                focusNode: _emailFocusNode,
+                prefixIcon: const Icon(Icons.email_outlined),
+                keyboardType: TextInputType.emailAddress,
+                helperText: widget.emailHelperText,
+                errorText: _emailError,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: _buildDomainDropdown(),
+            ),
+          ],
+        ),
+        if (widget.needCurrentPassword)
+          DialogTextField(
+            title: translate('Current password'),
+            controller: _currentPassword,
+            obscureText: true,
+            prefixIcon: DialogTextField.kPasswordIcon,
+            errorText: _currentPasswordError,
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: DialogTextField(
+                title: translate('Verification code'),
+                controller: _code,
+                keyboardType: TextInputType.number,
+                prefixIcon: const Icon(Icons.verified_outlined),
+                errorText: _codeError,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildSendCodeButton(),
+          ],
+        ),
+        if (widget.needNewPassword)
+          DialogTextField(
+            title: translate(widget.newPasswordLabel),
+            controller: _password,
+            obscureText: true,
+            prefixIcon: DialogTextField.kPasswordIcon,
+            errorText: _passwordError,
+          ),
+        if (widget.needConfirmPassword)
+          DialogTextField(
+            title: translate('Confirm password'),
+            controller: _confirm,
+            obscureText: true,
+            prefixIcon: DialogTextField.kPasswordIcon,
+            errorText: _confirmError,
+          ),
+        // NOT use Offstage to wrap LinearProgressIndicator
+        if (_isInProgress) const LinearProgressIndicator(),
+        const SizedBox(height: 12),
+        FittedBox(
+          child: Container(
+            height: 38,
+            width: 200,
+            child: ElevatedButton(
+              child: Text(
+                translate(widget.submitLabel),
+                style: const TextStyle(fontSize: 16),
+              ),
+              onPressed: _isInProgress ? null : _submit,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 const kAuthReqTypeOidc = 'oidc/';
 
 Future<bool?>? _activeLoginDialog;
@@ -975,19 +1315,35 @@ Future<bool?> _openLoginDialog() async {
             onLogin: onLogin,
             userFocusNode: userFocusNode,
           ),
-          TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.primary,
-            ),
-            onPressed: isInProgress || curOP.value.isNotEmpty
-                ? null
-                : () async {
-                    final registered = await registerDialog();
-                    if (registered == true) {
-                      close(true);
-                    }
-                  },
-            child: Text(translate('Register')),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.primary,
+                ),
+                onPressed: isInProgress || curOP.value.isNotEmpty
+                    ? null
+                    : () async {
+                        final registered = await registerDialog();
+                        if (registered == true) {
+                          close(true);
+                        }
+                      },
+                child: Text(translate('Register')),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.primary,
+                ),
+                onPressed: isInProgress || curOP.value.isNotEmpty
+                    ? null
+                    : () {
+                        forgotPasswordDialog();
+                      },
+                child: Text(translate('Forget Password')),
+              ),
+            ],
           ),
           thirdAuthWidget(),
         ],
@@ -1005,114 +1361,91 @@ Future<bool?> _openLoginDialog() async {
 }
 
 Future<bool?> registerDialog() async {
-  var email = TextEditingController();
-  var password = TextEditingController();
-  var confirmPassword = TextEditingController();
-  final emailFocusNode = FocusNode()..requestFocus();
-  Timer(Duration(milliseconds: 100), () => emailFocusNode.requestFocus());
-
-  String? emailMsg;
-  String? passwordMsg;
-  String? confirmMsg;
-  var isInProgress = false;
-
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
-    email.addListener(() {
-      if (emailMsg != null) {
-        setState(() => emailMsg = null);
-      }
-    });
-    password.addListener(() {
-      if (passwordMsg != null) {
-        setState(() => passwordMsg = null);
-      }
-    });
-    confirmPassword.addListener(() {
-      if (confirmMsg != null) {
-        setState(() => confirmMsg = null);
-      }
-    });
-
-    onRegister() async {
-      if (isInProgress) {
-        return;
-      }
-      final e = email.text.trim();
-      if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(e)) {
-        setState(() => emailMsg = '请输入正确的邮箱地址');
-        return;
-      }
-      if (password.text.length < 4) {
-        setState(() => passwordMsg = '密码至少 4 位');
-        return;
-      }
-      if (password.text != confirmPassword.text) {
-        setState(() => confirmMsg = '两次输入的密码不一致');
-        return;
-      }
-      setState(() => isInProgress = true);
-      try {
-        final resp = await gFFI.userModel.register(LoginRequest(
-            username: e,
-            password: password.text,
-            id: await bind.mainGetMyId(),
-            uuid: await bind.mainGetUuid(),
-            autoLogin: true,
-            type: HttpType.kAuthReqTypeAccount));
-        if (resp.access_token != null) {
-          await bind.mainSetLocalOption(
-              key: 'access_token', value: resp.access_token!);
-          await bind.mainSetLocalOption(
-              key: 'user_info', value: jsonEncode(resp.user ?? {}));
-          close(true);
-          return;
-        }
-        setState(() => passwordMsg = '注册失败，请重试');
-      } on RequestException catch (err) {
-        setState(() => emailMsg = translate(err.cause));
-      } catch (err) {
-        debugPrint('register failed: $err');
-        setState(() => emailMsg = '网络错误，请检查网络后重试');
-      }
-      setState(() => isInProgress = false);
-    }
-
     return CustomAlertDialog(
       title: Text(translate('Register')),
-      contentBoxConstraints: BoxConstraints(maxWidth: 300),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DialogTextField(
-              title: translate('Email'),
-              controller: email,
-              focusNode: emailFocusNode,
-              prefixIcon: Icon(Icons.email_outlined),
-              keyboardType: TextInputType.emailAddress,
-              errorText: emailMsg),
-          DialogTextField(
-              title: translate('Password'),
-              controller: password,
-              obscureText: true,
-              prefixIcon: DialogTextField.kPasswordIcon,
-              errorText: passwordMsg),
-          DialogTextField(
-              title: translate('Confirm password'),
-              controller: confirmPassword,
-              obscureText: true,
-              prefixIcon: DialogTextField.kPasswordIcon,
-              errorText: confirmMsg),
-          // NOT use Offstage to wrap LinearProgressIndicator
-          if (isInProgress) const LinearProgressIndicator(),
-        ],
+      contentBoxConstraints: BoxConstraints(maxWidth: 340),
+      content: _AccountForm(
+        emailPurpose: 'register',
+        newPasswordLabel: 'Password',
+        needConfirmPassword: true,
+        submitLabel: 'Register',
+        onSubmit: ({required email, required code, required password}) async {
+          final resp = await gFFI.userModel.register(LoginRequest(
+              username: email,
+              password: password,
+              code: code,
+              id: await bind.mainGetMyId(),
+              uuid: await bind.mainGetUuid(),
+              autoLogin: true,
+              type: HttpType.kAuthReqTypeAccount));
+          if (resp.access_token != null) {
+            await bind.mainSetLocalOption(
+                key: 'access_token', value: resp.access_token!);
+            await bind.mainSetLocalOption(
+                key: 'user_info', value: jsonEncode(resp.user ?? {}));
+            return null;
+          }
+          return '注册失败，请重试';
+        },
+        onSuccess: close,
       ),
       onCancel: close,
-      onSubmit: isInProgress ? null : onRegister,
-      actions: [
-        dialogButton(translate('Cancel'), onPressed: close, isOutline: true),
-        dialogButton(
-            translate('Register'), onPressed: isInProgress ? null : onRegister),
-      ],
+    );
+  });
+  return res;
+}
+
+Future<bool?> forgotPasswordDialog() async {
+  final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
+    return CustomAlertDialog(
+      title: Text(translate('Forget Password')),
+      contentBoxConstraints: BoxConstraints(maxWidth: 340),
+      content: _AccountForm(
+        emailPurpose: 'reset',
+        newPasswordLabel: 'New Password',
+        needConfirmPassword: true,
+        submitLabel: 'Reset',
+        onSubmit: ({required email, required code, required password}) async {
+          await gFFI.userModel.resetPassword(email, code, password);
+          return null;
+        },
+        onSuccess: () {
+          showToast('密码已重置，请使用新密码登录');
+          close(true);
+        },
+      ),
+      onCancel: close,
+    );
+  });
+  return res;
+}
+
+Future<bool?> changeEmailDialog() async {
+  final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
+    return CustomAlertDialog(
+      title: Text(translate('Change email')),
+      contentBoxConstraints: BoxConstraints(maxWidth: 340),
+      content: _AccountForm(
+        emailPurpose: 'change_email',
+        needCurrentPassword: true,
+        needNewPassword: false,
+        needConfirmPassword: false,
+        emailTitle: 'New Email',
+        emailHelperText: '验证码将发送到新邮箱',
+        newPasswordLabel: 'Password',
+        submitLabel: 'Confirm',
+        onSubmit: ({required email, required code, required password}) async {
+          await gFFI.userModel.changeEmail(
+              newEmail: email, code: code, password: password);
+          return null;
+        },
+        onSuccess: () {
+          showToast('邮箱已更换成功');
+          close(true);
+        },
+      ),
+      onCancel: close,
     );
   });
   return res;

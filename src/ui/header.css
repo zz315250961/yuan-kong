@@ -70,6 +70,25 @@ header span:active, header #screen:active {
   background: color(gray-bg);
 }
 
+header .toolbar-item {
+  flow: vertical;
+  text-align: center;
+  vertical-align: middle;
+  padding: 3px 6px;
+  margin: * 0.2em;
+}
+
+header .toolbar-item svg {
+  size: 16px;
+  margin: * auto;
+}
+
+header .toolbar-label {
+  font-size: 9px;
+  line-height: 1.2em;
+  color: color(light-text);
+}
+
 div#global-screens {
   position: relative;
   margin: 2px 0;

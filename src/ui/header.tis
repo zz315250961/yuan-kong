@@ -140,18 +140,18 @@ class Header: Reactor.Component {
         self.timer(1ms, updatePrivacyMode);
         self.timer(1ms, toggleMenuState);
         return <div style={style}>
-            {is_osx || is_xfce ? "" : <span #fullscreen>{svg_fullscreen}</span>}
+            {is_osx || is_xfce ? "" : <span #fullscreen .toolbar-item>{svg_fullscreen}<div class="toolbar-label">{translate('Fullscreen')}</div></span>}
             <div #screens>
                 <span #secure title={title_conn}>{icon_conn}</span>
                 <div .remote-id>{get_id()}</div>
                 <div style="flow:horizontal;border-spacing: 0.5em;">{screens}</div>
                 {this.renderGlobalScreens()}
             </div>
-            <span #chat>{svg_chat}</span>
-            <span #action>{svg_action}</span>
-            <span #display>{svg_display}</span>
-            <span #keyboard>{svg_keyboard}</span>
-            {recording_enabled && show_recording_button ? <span #recording>{recording ? svg_recording_on : svg_recording_off}</span> : ""}
+            <span #chat .toolbar-item>{svg_chat}<div class="toolbar-label">{translate('Chat')}</div></span>
+            <span #action .toolbar-item>{svg_action}<div class="toolbar-label">{translate('More')}</div></span>
+            <span #display .toolbar-item>{svg_display}<div class="toolbar-label">{translate('Display')}</div></span>
+            <span #keyboard .toolbar-item>{svg_keyboard}<div class="toolbar-label">{translate('Keyboard')}</div></span>
+            {recording_enabled && show_recording_button ? <span #recording .toolbar-item>{recording ? svg_recording_on : svg_recording_off}<div class="toolbar-label">{translate('Recording')}</div></span> : ""}
             {this.renderKeyboardPop()}
             {this.renderDisplayPop()}
             {this.renderActionPop()}
@@ -512,7 +512,7 @@ if (is_osx) {
 
 if (!(is_file_transfer || is_port_forward)) {
     $(header).style.set {
-        height: "32px",
+        height: "48px",
     };
     if (!is_osx) {
         $(div.window-icon).style.set {

@@ -737,6 +737,14 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                   }
                 },
               ),
+              if (gFFI.userModel.userName.value.isNotEmpty)
+                SettingsTile(
+                  title: Text(translate('Change email')),
+                  leading: Icon(Icons.email_outlined),
+                  onPressed: (context) {
+                    changeEmailDialog();
+                  },
+                ),
             ],
           ),
         SettingsSection(title: Text(translate("Settings")), tiles: [

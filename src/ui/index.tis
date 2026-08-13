@@ -527,12 +527,12 @@ class MyIdMenu: Reactor.Component {
                 <Enhancements />
                 {!disable_settings && <li #allow-remote-config-modification><span>{svg_checkmark}</span>{translate('Enable remote configuration modification')}</li>}
                 {!disable_settings && <div .separator />}
-                {!disable_settings && !hide_server_settings && <li #custom-server>{translate('ID/Relay Server')}</li>}
-                {!disable_settings && <li #whitelist title={translate('whitelist_tip')}>{translate('IP Whitelisting')}</li>}
-                {!disable_settings && !hide_proxy_settings && <li #socks5-server>{translate('Socks5/Http(s) Proxy')}</li>}
-                {!disable_settings && !hide_websocket_settings && <li #allow-websocket><span>{svg_checkmark}</span>{translate('Use WebSocket')}</li>}
-                {!disable_settings && !using_public_server && !outgoing_only && <li #disable-udp class={disable_udp ? "selected" : "line-through"}><span>{svg_checkmark}</span>{translate('Disable UDP')}</li>}
-                {!disable_settings && !using_public_server && <li #allow-insecure-tls-fallback><span>{svg_checkmark}</span>{translate('Allow insecure TLS fallback')}</li>}
+                {false && <li #custom-server>{translate('ID/Relay Server')}</li>}
+                {false && <li #whitelist title={translate('whitelist_tip')}>{translate('IP Whitelisting')}</li>}
+                {false && <li #socks5-server>{translate('Socks5/Http(s) Proxy')}</li>}
+                {false && <li #allow-websocket><span>{svg_checkmark}</span>{translate('Use WebSocket')}</li>}
+                {false && <li #disable-udp class={disable_udp ? "selected" : "line-through"}><span>{svg_checkmark}</span>{translate('Disable UDP')}</li>}
+                {false && <li #allow-insecure-tls-fallback><span>{svg_checkmark}</span>{translate('Allow insecure TLS fallback')}</li>}
                 <div .separator />
                 {(!hide_stop_service || service_stopped) && <li #stop-service class={service_stopped ? "line-through" : "selected"}><span>{svg_checkmark}</span>{translate("Enable service")}</li>}
                 {!disable_settings && is_win && handler.is_installed() ? <ShareRdp /> : ""}
@@ -1517,14 +1517,37 @@ function set_local_user_info(user) {
     handler.set_local_option("user_info", JSON.stringify(user_info));
 }
 
+function is_valid_email(email) {
+    email = (email || '').trim();
+    var at = email.indexOf('@');
+    if (at <= 0) return false;
+    var dot = email.indexOf('.', at + 2);
+    return dot > at + 1 && dot < email.length - 1;
+}
+
 function login() {
     var name0 = getUserName();
     var pass0 = '';
     msgbox("custom-login", translate('Login'), <div .form .set-password> 
-            <div><span>{translate('Username')}:</span><input|text name="username" value={name0} .outline-focus /></div> 
-            <div><span>{translate('Password')}:</span><PasswordComponent value={pass0} /></div> 
+            <div><span>{translate('Email')}:</span><input|text name="username" value={name0} .outline-focus /></div> 
+            <div><span>{translate('Password')}:</span><PasswordComponent value={pass0} /></div>
+            <div style="text-align:center; margin-top:0.8em;">
+                <button .link-button .custom-event name="register">{translate('Register')}</button>
+                <button .link-button .custom-event name="forgot">{translate('Forget Password')}</button>
+            </div>
         </div>, "", function(res=null, show_progress) {
         if (!res) return;
+        // custom-event: register/forgot link clicked (res is the button element)
+        if (res.name) {
+            if (res.name == 'register') {
+                if (this.close) this.close();
+                registerDesktopDialog();
+            } else if (res.name == 'forgot') {
+                if (this.close) this.close();
+                forgotDesktopDialog();
+            }
+            return " ";
+        }
         show_progress();
         var name = (res.username || '').trim();
         if (!name) {
@@ -1564,6 +1587,136 @@ function login() {
         });
         return " ";
       }, msgbox_default_height, get_msgbox_width());
+}
+
+function registerDesktopDialog() {
+    msgbox("custom-register", translate('Register'), <div .form .set-password>
+            <div><span>{translate('Email')}:</span><input|text name="email" .outline-focus /></div>
+            <div><span>{translate('Verification code')}:</span><input|text name="code" /></div>
+            <div><span>{translate('Password')}:</span><PasswordComponent name="password" /></div>
+            <div><span>{translate('Confirm password')}:</span><PasswordComponent name="confirm" /></div>
+            <div style="text-align:center; margin-top:0.8em;"><button .link-button .custom-event name="sendcode">{translate('Send code')}</button></div>
+        </div>, "", function(res=null, show_progress) {
+            if (!res) return;
+            var url = handler.get_api_server();
+            if (res.name == 'sendcode') {
+                var email = (this.getValues().email || '').trim();
+                if (!is_valid_email(email)) {
+                    show_progress(false, translate('Enter a valid email address'));
+                    return " ";
+                }
+                show_progress();
+                httpRequest(url + "/api/send-code", #post, {email: email, purpose: 'register'}, function(data) {
+                    if (data.error) {
+                        show_progress(false, translate(data.error));
+                        return;
+                    }
+                    show_progress(false, translate('Verification code sent'));
+                    res.text = translate('Sent');
+                }, function(err, status) {
+                    show_progress(false, translate(err));
+                });
+                return " ";
+            }
+            var email = (res.email || '').trim();
+            var code = (res.code || '').trim();
+            var pass = res.password || '';
+            var confirm = res.confirm || '';
+            if (!is_valid_email(email)) {
+                show_progress(false, translate('Enter a valid email address'));
+                return " ";
+            }
+            if (pass.length < 4) {
+                show_progress(false, translate('Password at least 4 characters'));
+                return " ";
+            }
+            if (pass != confirm) {
+                show_progress(false, translate('Passwords do not match'));
+                return " ";
+            }
+            if (!code) {
+                show_progress(false, translate('Please enter the verification code'));
+                return " ";
+            }
+            show_progress();
+            httpRequest(url + "/api/register", #post, {username: email, password: pass, code: code, id: my_id, uuid: handler.get_uuid(), autoLogin: true, type: 'account', deviceInfo: getDeviceInfo()}, function(data) {
+                if (data.error) {
+                    show_progress(false, translate(data.error));
+                    return;
+                }
+                handler.set_local_option("access_token", data.access_token);
+                set_local_user_info(data.user);
+                show_progress(-1);
+                myIdMenu.update();
+                getAb();
+            }, function(err, status) {
+                show_progress(false, translate(err));
+            });
+            return " ";
+        }, msgbox_default_height, get_msgbox_width());
+}
+
+function forgotDesktopDialog() {
+    msgbox("custom-forgot", translate('Forget Password'), <div .form .set-password>
+            <div><span>{translate('Email')}:</span><input|text name="email" .outline-focus /></div>
+            <div><span>{translate('Verification code')}:</span><input|text name="code" /></div>
+            <div><span>{translate('New Password')}:</span><PasswordComponent name="password" /></div>
+            <div><span>{translate('Confirm password')}:</span><PasswordComponent name="confirm" /></div>
+            <div style="text-align:center; margin-top:0.8em;"><button .link-button .custom-event name="sendcode">{translate('Send code')}</button></div>
+        </div>, "", function(res=null, show_progress) {
+            if (!res) return;
+            var url = handler.get_api_server();
+            if (res.name == 'sendcode') {
+                var email = (this.getValues().email || '').trim();
+                if (!is_valid_email(email)) {
+                    show_progress(false, translate('Enter a valid email address'));
+                    return " ";
+                }
+                show_progress();
+                httpRequest(url + "/api/send-code", #post, {email: email, purpose: 'reset'}, function(data) {
+                    if (data.error) {
+                        show_progress(false, translate(data.error));
+                        return;
+                    }
+                    show_progress(false, translate('Verification code sent'));
+                    res.text = translate('Sent');
+                }, function(err, status) {
+                    show_progress(false, translate(err));
+                });
+                return " ";
+            }
+            var email = (res.email || '').trim();
+            var code = (res.code || '').trim();
+            var pass = res.password || '';
+            var confirm = res.confirm || '';
+            if (!is_valid_email(email)) {
+                show_progress(false, translate('Enter a valid email address'));
+                return " ";
+            }
+            if (pass.length < 4) {
+                show_progress(false, translate('Password at least 4 characters'));
+                return " ";
+            }
+            if (pass != confirm) {
+                show_progress(false, translate('Passwords do not match'));
+                return " ";
+            }
+            if (!code) {
+                show_progress(false, translate('Please enter the verification code'));
+                return " ";
+            }
+            show_progress();
+            httpRequest(url + "/api/reset-password", #post, {email: email, code: code, password: pass}, function(data) {
+                if (data.error) {
+                    show_progress(false, translate(data.error));
+                    return;
+                }
+                show_progress(false, translate('Password reset, please login with new password'));
+            }, function(err, status) {
+                show_progress(false, translate(err));
+            });
+            return " ";
+        }, msgbox_default_height, get_msgbox_width());
 }
 
 function on_2fa_check(last_msg) {

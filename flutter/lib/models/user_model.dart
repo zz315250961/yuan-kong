@@ -199,6 +199,82 @@ class UserModel {
     return _postAuth('/api/register', loginRequest);
   }
 
+  /// 发送邮箱验证码（purpose: register / reset / change_email）。
+  /// 成功后服务端会发邮件；SMTP 未配置时验证码打印在服务器日志。
+  /// throw [RequestException]
+  Future<void> sendCode(String email, String purpose) async {
+    final url = await bind.mainGetApiServer();
+    final resp = await http.post(Uri.parse('$url/api/send-code'),
+        body: jsonEncode({'email': email, 'purpose': purpose}));
+    _throwIfError(resp);
+  }
+
+  /// 忘记密码：验证码 + 新密码。
+  /// throw [RequestException]
+  Future<void> resetPassword(
+      String email, String code, String password) async {
+    final url = await bind.mainGetApiServer();
+    final resp = await http.post(Uri.parse('$url/api/reset-password'),
+        body: jsonEncode({'email': email, 'code': code, 'password': password}));
+    _throwIfError(resp);
+  }
+
+  /// 更换绑定邮箱：需登录态 + 当前密码 + 发往新邮箱的验证码。
+  /// throw [RequestException]
+  Future<UserPayload> changeEmail(
+      {required String newEmail,
+      required String code,
+      required String password}) async {
+    final url = await bind.mainGetApiServer();
+    final resp = await http.post(Uri.parse('$url/api/change-email'),
+        headers: getHttpHeaders(),
+        body: jsonEncode({
+          'new_email': newEmail,
+          'code': code,
+          'password': password,
+        }));
+    final Map<String, dynamic> body;
+    try {
+      body = jsonDecode(decode_http_response(resp));
+    } catch (e) {
+      debugPrint("changeEmail: jsonDecode resp body failed: ${e.toString()}");
+      if (resp.statusCode != 200) {
+        BotToast.showText(
+            contentColor: Colors.red, text: 'HTTP ${resp.statusCode}');
+      }
+      rethrow;
+    }
+    if (resp.statusCode != 200) {
+      throw RequestException(resp.statusCode, body['error'] ?? '');
+    }
+    if (body['error'] != null) {
+      throw RequestException(0, body['error']);
+    }
+    final user = UserPayload.fromJson(body['user'] ?? {});
+    _parseAndUpdateUser(user);
+    return user;
+  }
+
+  void _throwIfError(http.Response resp) {
+    final Map<String, dynamic> body;
+    try {
+      body = jsonDecode(decode_http_response(resp));
+    } catch (e) {
+      debugPrint("auth request failed to decode: ${e.toString()}");
+      if (resp.statusCode != 200) {
+        BotToast.showText(
+            contentColor: Colors.red, text: 'HTTP ${resp.statusCode}');
+      }
+      rethrow;
+    }
+    if (resp.statusCode != 200) {
+      throw RequestException(resp.statusCode, body['error'] ?? '');
+    }
+    if (body['error'] != null) {
+      throw RequestException(0, body['error']);
+    }
+  }
+
   Future<LoginResponse> _postAuth(
       String path, LoginRequest loginRequest) async {
     final url = await bind.mainGetApiServer();
