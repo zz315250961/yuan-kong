@@ -758,30 +758,6 @@ class _ThirdPartyLoginButtons extends StatelessWidget {
   }
 }
 
-const kCommonEmailDomains = [
-  'qq.com',
-  '163.com',
-  '126.com',
-  'foxmail.com',
-  'gmail.com',
-  'outlook.com',
-  'hotmail.com',
-  '139.com',
-  'sina.com',
-  'sohu.com',
-  '189.cn',
-  'yeah.net',
-];
-
-void _applyEmailDomain(TextEditingController ctrl, String domain) {
-  if (domain.isEmpty) {
-    return;
-  }
-  final text = ctrl.text.trim();
-  final at = text.indexOf('@');
-  ctrl.text = at < 0 ? '$text@$domain' : '${text.substring(0, at)}@$domain';
-}
-
 bool _isValidEmail(String email) =>
     RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email.trim());
 
@@ -966,25 +942,6 @@ class _AccountFormState extends State<_AccountForm> {
     }
   }
 
-  Widget _buildDomainDropdown() {
-    return PopupMenuButton<String>(
-      tooltip: translate('Email'),
-      icon: const Icon(Icons.arrow_drop_down_circle_outlined),
-      onSelected: (domain) => _applyEmailDomain(_email, domain),
-      itemBuilder: (context) => [
-        for (final domain in kCommonEmailDomains)
-          PopupMenuItem<String>(
-            value: domain,
-            child: Text('@$domain'),
-          ),
-        const PopupMenuItem<String>(
-          value: '',
-          child: Text('@其他邮箱'),
-        ),
-      ],
-    );
-  }
-
   Widget _buildSendCodeButton() {
     final enabled = !_sendingCode && _countdown == 0;
     return SizedBox(
@@ -1011,25 +968,14 @@ class _AccountFormState extends State<_AccountForm> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: DialogTextField(
-                title: translate(widget.emailTitle),
-                controller: _email,
-                focusNode: _emailFocusNode,
-                prefixIcon: const Icon(Icons.email_outlined),
-                keyboardType: TextInputType.emailAddress,
-                helperText: widget.emailHelperText,
-                errorText: _emailError,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 14),
-              child: _buildDomainDropdown(),
-            ),
-          ],
+        DialogTextField(
+          title: translate(widget.emailTitle),
+          controller: _email,
+          focusNode: _emailFocusNode,
+          prefixIcon: const Icon(Icons.email_outlined),
+          keyboardType: TextInputType.emailAddress,
+          helperText: widget.emailHelperText,
+          errorText: _emailError,
         ),
         if (widget.needCurrentPassword)
           DialogTextField(
@@ -1073,7 +1019,7 @@ class _AccountFormState extends State<_AccountForm> {
           ),
         // NOT use Offstage to wrap LinearProgressIndicator
         if (_isInProgress) const LinearProgressIndicator(),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         FittedBox(
           child: Container(
             height: 38,
