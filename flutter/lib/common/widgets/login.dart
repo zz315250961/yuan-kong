@@ -671,7 +671,7 @@ class LoginWidgetUserPass extends StatelessWidget {
             PasswordWidget(
               controller: pass,
               autoFocus: false,
-              reRequestFocus: true,
+              reRequestFocus: false,
               errorText: passMsg,
             ),
             // NOT use Offstage to wrap LinearProgressIndicator
@@ -827,7 +827,7 @@ class _AccountFormState extends State<_AccountForm> {
   final _currentPassword = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
-  final _emailFocusNode = FocusNode()..requestFocus();
+  final _emailFocusNode = FocusNode();
 
   String? _emailError;
   String? _codeError;
@@ -838,12 +838,6 @@ class _AccountFormState extends State<_AccountForm> {
   bool _sendingCode = false;
   int _countdown = 0;
   Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    Timer(const Duration(milliseconds: 100), () => _emailFocusNode.requestFocus());
-  }
 
   @override
   void dispose() {
@@ -1125,8 +1119,7 @@ Future<bool?> _openLoginDialog() async {
   var username =
       TextEditingController(text: UserModel.getLocalUserInfo()?['name'] ?? '');
   var password = TextEditingController();
-  final userFocusNode = FocusNode()..requestFocus();
-  Timer(Duration(milliseconds: 100), () => userFocusNode..requestFocus());
+  final userFocusNode = FocusNode();
 
   String? usernameMsg;
   String? passwordMsg;
@@ -1351,7 +1344,7 @@ Future<bool?> _openLoginDialog() async {
       onCancel: onDialogCancel,
       onSubmit: onLogin,
     );
-  }).whenComplete(oidcAuth.close);
+  }, clickMaskDismiss: true, backDismiss: true).whenComplete(oidcAuth.close);
 
   if (res != null) {
     await UserModel.updateOtherModels();
@@ -1360,10 +1353,38 @@ Future<bool?> _openLoginDialog() async {
   return res;
 }
 
+Widget _accountDialogTitle(
+    BuildContext context, String title, VoidCallback onClose) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(title).marginOnly(top: MyTheme.dialogPadding),
+      InkWell(
+        onTap: onClose,
+        hoverColor: Colors.red,
+        borderRadius: BorderRadius.circular(5),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            Icons.close,
+            size: 25,
+            color: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.color
+                ?.withOpacity(0.55),
+          ),
+        ),
+      ).marginOnly(top: 10, right: 15),
+    ],
+  );
+}
+
 Future<bool?> registerDialog() async {
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('Register')),
+      title: _accountDialogTitle(context, translate('Register'), () => close()),
       contentBoxConstraints: BoxConstraints(maxWidth: 340),
       content: _AccountForm(
         emailPurpose: 'register',
@@ -1392,14 +1413,15 @@ Future<bool?> registerDialog() async {
       ),
       onCancel: close,
     );
-  });
+  }, clickMaskDismiss: true, backDismiss: true);
   return res;
 }
 
 Future<bool?> forgotPasswordDialog() async {
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('Forget Password')),
+      title: _accountDialogTitle(
+          context, translate('Forget Password'), () => close()),
       contentBoxConstraints: BoxConstraints(maxWidth: 340),
       content: _AccountForm(
         emailPurpose: 'reset',
@@ -1417,14 +1439,15 @@ Future<bool?> forgotPasswordDialog() async {
       ),
       onCancel: close,
     );
-  });
+  }, clickMaskDismiss: true, backDismiss: true);
   return res;
 }
 
 Future<bool?> changeEmailDialog() async {
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('Change email')),
+      title:
+          _accountDialogTitle(context, translate('Change email'), () => close()),
       contentBoxConstraints: BoxConstraints(maxWidth: 340),
       content: _AccountForm(
         emailPurpose: 'change_email',
@@ -1447,7 +1470,7 @@ Future<bool?> changeEmailDialog() async {
       ),
       onCancel: close,
     );
-  });
+  }, clickMaskDismiss: true, backDismiss: true);
   return res;
 }
 
