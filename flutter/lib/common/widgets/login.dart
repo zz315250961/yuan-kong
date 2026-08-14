@@ -658,9 +658,8 @@ class LoginWidgetUserPass extends StatelessWidget {
     return Padding(
         padding: EdgeInsets.all(0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 8.0),
             DialogTextField(
                 title: usernameTitle ?? translate(DialogTextField.kUsernameTitle),
                 controller: username,
@@ -668,6 +667,7 @@ class LoginWidgetUserPass extends StatelessWidget {
                 prefixIcon: usernamePrefixIcon ?? DialogTextField.kUsernameIcon,
                 keyboardType: TextInputType.emailAddress,
                 errorText: usernameMsg),
+            const SizedBox(height: 4.0),
             PasswordWidget(
               controller: pass,
               autoFocus: false,
@@ -677,81 +677,59 @@ class LoginWidgetUserPass extends StatelessWidget {
             // NOT use Offstage to wrap LinearProgressIndicator
             if (isInProgress) const LinearProgressIndicator(),
             const SizedBox(height: 12.0),
-            FittedBox(
-                child:
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(
-                height: 38,
-                width: 200,
-                child: Obx(() => ElevatedButton(
-                      child: Text(
-                        translate('Login'),
-                        style: TextStyle(fontSize: 16),
-                      ),
-                      onPressed: curOP.value.isEmpty && !isInProgress
-                          ? () {
-                              onLogin();
-                            }
-                          : null,
-                    )),
-              ),
-            ])),
+            SizedBox(
+              height: 44,
+              width: double.infinity,
+              child: Obx(() => ElevatedButton(
+                    child: Text(
+                      translate('Login'),
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    onPressed: curOP.value.isEmpty && !isInProgress
+                        ? () {
+                            onLogin();
+                          }
+                        : null,
+                  )),
+            ),
           ],
         ));
   }
 }
 
 class _ThirdPartyLoginButtons extends StatelessWidget {
-  final VoidCallback? onQqEmail;
-  const _ThirdPartyLoginButtons({Key? key, this.onQqEmail}) : super(key: key);
-
-  Widget _buildButton(
-      BuildContext context, IconData icon, String label, VoidCallback? onPressed) {
-    final bgColor = Theme.of(context).colorScheme.surfaceVariant;
-    final fgColor = Theme.of(context).colorScheme.onSurfaceVariant;
-    return Container(
-      height: 36,
-      width: 200,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: bgColor,
-          foregroundColor: fgColor,
-        ).copyWith(elevation: ButtonStyleButton.allOrNull(0.0)),
-        onPressed: onPressed,
-        child: Row(
-          children: [
-            SizedBox(
-              width: 30,
-              child: Icon(icon, size: 18),
-            ),
-            Expanded(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Center(child: Text(label)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  const _ThirdPartyLoginButtons({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _buildButton(
-          context,
-          Icons.chat_bubble_outline,
-          '微信登录（预留）',
-          () => showToast('微信登录即将上线，敬请期待'),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Expanded(child: Divider()),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                '其他登录方式',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+              ),
+            ),
+            const Expanded(child: Divider()),
+          ],
         ),
-        const Divider(indent: 5, endIndent: 5),
-        _buildButton(
-          context,
-          Icons.alternate_email,
-          'QQ邮箱登录',
-          onQqEmail,
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 40,
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => showToast('微信登录即将上线，敬请期待'),
+            icon: const Icon(Icons.chat_bubble_outline, size: 18),
+            label: const Text('微信登录（预留）'),
+          ),
         ),
       ],
     );
@@ -967,6 +945,7 @@ class _AccountFormState extends State<_AccountForm> {
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         DialogTextField(
           title: translate(widget.emailTitle),
@@ -1020,17 +999,14 @@ class _AccountFormState extends State<_AccountForm> {
         // NOT use Offstage to wrap LinearProgressIndicator
         if (_isInProgress) const LinearProgressIndicator(),
         const SizedBox(height: 8),
-        FittedBox(
-          child: Container(
-            height: 38,
-            width: 200,
-            child: ElevatedButton(
-              child: Text(
-                translate(widget.submitLabel),
-                style: const TextStyle(fontSize: 16),
-              ),
-              onPressed: _isInProgress ? null : _submit,
+        SizedBox(
+          height: 44,
+          child: ElevatedButton(
+            child: Text(
+              translate(widget.submitLabel),
+              style: const TextStyle(fontSize: 16),
             ),
+            onPressed: _isInProgress ? null : _submit,
           ),
         ),
       ],
@@ -1179,25 +1155,7 @@ Future<bool?> _openLoginDialog() async {
       setState(() => isInProgress = false);
     }
 
-    thirdAuthWidget() => Column(
-          children: [
-            const SizedBox(
-              height: 8.0,
-            ),
-            Center(
-                child: Text(
-              translate('or'),
-              style: TextStyle(fontSize: 16),
-            )),
-            const SizedBox(
-              height: 8.0,
-            ),
-            _ThirdPartyLoginButtons(onQqEmail: () {
-              userFocusNode.requestFocus();
-              showToast('请使用 QQ 邮箱和密码登录');
-            }),
-          ],
-        );
+    thirdAuthWidget() => const _ThirdPartyLoginButtons();
 
     final title = Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1237,11 +1195,8 @@ Future<bool?> _openLoginDialog() async {
       titlePadding: titlePadding,
       contentBoxConstraints: BoxConstraints(minWidth: 400),
       content: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(
-            height: 8.0,
-          ),
           LoginWidgetUserPass(
             username: username,
             pass: password,
@@ -1255,7 +1210,7 @@ Future<bool?> _openLoginDialog() async {
             userFocusNode: userFocusNode,
           ),
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               TextButton(
                 style: TextButton.styleFrom(
@@ -1355,7 +1310,10 @@ Future<bool?> registerDialog() async {
           }
           return '注册失败，请重试';
         },
-        onSuccess: close,
+        onSuccess: () {
+          showToast('注册成功，已自动登录');
+          close(true);
+        },
       ),
       onCancel: close,
     );
