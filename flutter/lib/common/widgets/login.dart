@@ -697,45 +697,6 @@ class LoginWidgetUserPass extends StatelessWidget {
   }
 }
 
-class _ThirdPartyLoginButtons extends StatelessWidget {
-  const _ThirdPartyLoginButtons({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            const Expanded(child: Divider()),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                '其他登录方式',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-              ),
-            ),
-            const Expanded(child: Divider()),
-          ],
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 40,
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () => showToast('微信登录即将上线，敬请期待'),
-            icon: const Icon(Icons.chat_bubble_outline, size: 18),
-            label: const Text('微信登录（预留）'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 bool _isValidEmail(String email) =>
     RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email.trim());
 
@@ -1155,8 +1116,6 @@ Future<bool?> _openLoginDialog() async {
       setState(() => isInProgress = false);
     }
 
-    thirdAuthWidget() => const _ThirdPartyLoginButtons();
-
     final title = Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1239,7 +1198,6 @@ Future<bool?> _openLoginDialog() async {
               ),
             ],
           ),
-          thirdAuthWidget(),
         ],
       ),
       onCancel: onDialogCancel,

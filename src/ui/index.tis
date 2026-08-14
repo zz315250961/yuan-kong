@@ -542,6 +542,7 @@ class MyIdMenu: Reactor.Component {
                 {!disable_account && (accountLabel ?
                 <li #logout>{translate('Logout')} ({accountLabel})</li> :
                 <li #login>{translate('Login')}</li>)}
+                {!disable_account && accountLabel ? <li #change-email>{translate('Change email')}</li> : ""}
                 {!disable_change_id && !disable_settings && handler.is_ok_change_id() && key_confirmed && connect_status > 0 ? <li #change-id>{translate('Change ID')}</li> : ""}
                 <div .separator />
                 <li #allow-darktheme><span>{svg_checkmark}</span>{translate('Dark Theme')}</li>
@@ -570,6 +571,10 @@ class MyIdMenu: Reactor.Component {
 
     event click $(li#logout) () {
         logout();
+    }
+
+    event click $(li#change-email) () {
+        changeEmailDesktopDialog();
     }
 
     function toggleMenuState() {
@@ -1525,19 +1530,38 @@ function is_valid_email(email) {
     return dot > at + 1 && dot < email.length - 1;
 }
 
+function startCountdown(btn) {
+    var left = 60;
+    btn.state.disabled = true;
+    btn.text = left + 's';
+    var tick = function() {
+        left--;
+        if (left <= 0) {
+            btn.state.disabled = false;
+            btn.text = translate('Send code');
+            return;
+        }
+        btn.text = left + 's';
+        self.timer(1000ms, tick);
+    };
+    self.timer(1000ms, tick);
+}
+
 function login() {
     var name0 = getUserName();
     var pass0 = '';
-    msgbox("custom-login", translate('Login'), <div .form .set-password> 
-            <div><span>{translate('Email')}:</span><input|text name="username" value={name0} .outline-focus /></div> 
-            <div><span>{translate('Password')}:</span><PasswordComponent value={pass0} /></div>
-            <div style="text-align:center; margin-top:0.8em;">
-                <button .link-button .custom-event name="register">{translate('Register')}</button>
-                <button .link-button .custom-event name="forgot">{translate('Forget Password')}</button>
+    msgbox("custom-login", translate('Login'), <div .form .account-form> 
+            <div class="field"><label>{translate('Email')}</label><input|text name="username" value={name0} .outline-focus /></div> 
+            <div class="field"><label>{translate('Password')}</label><PasswordComponent value={pass0} /></div>
+            <div class="account-links">
+                <button .custom-event name="register">{translate('Register')}</button>
+                <button .custom-event name="forgot">{translate('Forget Password')}</button>
             </div>
+            <div class="account-divider"><span>{translate('Other login methods')}</span></div>
+            <button .custom-event .wechat-btn name="wechat">{translate('WeChat login (reserved)')}</button>
         </div>, "", function(res=null, show_progress) {
         if (!res) return;
-        // custom-event: register/forgot link clicked (res is the button element)
+        // custom-event: register/forgot/wechat link clicked (res is the button element)
         if (res.name) {
             if (res.name == 'register') {
                 if (this.close) this.close();
@@ -1545,6 +1569,9 @@ function login() {
             } else if (res.name == 'forgot') {
                 if (this.close) this.close();
                 forgotDesktopDialog();
+            } else if (res.name == 'wechat') {
+                if (this.close) this.close();
+                msgbox("custom-nook-hasclose", translate('Hint'), translate('WeChat login coming soon'), "", function(){});
             }
             return " ";
         }
@@ -1590,16 +1617,18 @@ function login() {
 }
 
 function registerDesktopDialog() {
-    msgbox("custom-register", translate('Register'), <div .form .set-password>
-            <div><span>{translate('Email')}:</span><input|text name="email" .outline-focus /></div>
-            <div><span>{translate('Verification code')}:</span><input|text name="code" /></div>
-            <div><span>{translate('Password')}:</span><PasswordComponent name="password" /></div>
-            <div><span>{translate('Confirm password')}:</span><PasswordComponent name="confirm" /></div>
-            <div style="text-align:center; margin-top:0.8em;"><button .link-button .custom-event name="sendcode">{translate('Send code')}</button></div>
+    msgbox("custom-register", translate('Register'), <div .form .account-form>
+            <div class="field"><label>{translate('Email')}</label><input|text name="email" .outline-focus /></div>
+            <div class="field"><label>{translate('Verification code')}</label><input|text name="code" /></div>
+            <div class="field"><label>{translate('Password')}</label><PasswordComponent name="password" /></div>
+            <div class="field"><label>{translate('Confirm password')}</label><PasswordComponent name="confirm" /></div>
+            <div class="sendcode-btn"><button .custom-event name="sendcode">{translate('Send code')}</button></div>
         </div>, "", function(res=null, show_progress) {
             if (!res) return;
+            var me = this;
             var url = handler.get_api_server();
             if (res.name == 'sendcode') {
+                if (res.state.disabled) return " ";
                 var email = (this.getValues().email || '').trim();
                 if (!is_valid_email(email)) {
                     show_progress(false, translate('Enter a valid email address'));
@@ -1612,7 +1641,7 @@ function registerDesktopDialog() {
                         return;
                     }
                     show_progress(false, translate('Verification code sent'));
-                    res.text = translate('Sent');
+                    startCountdown(res);
                 }, function(err, status) {
                     show_progress(false, translate(err));
                 });
@@ -1646,9 +1675,10 @@ function registerDesktopDialog() {
                 }
                 handler.set_local_option("access_token", data.access_token);
                 set_local_user_info(data.user);
-                show_progress(-1);
+                show_progress(false, translate('Registration successful, logged in automatically'));
                 myIdMenu.update();
                 getAb();
+                self.timer(1600ms, function() { if (me.close) me.close(); });
             }, function(err, status) {
                 show_progress(false, translate(err));
             });
@@ -1657,16 +1687,18 @@ function registerDesktopDialog() {
 }
 
 function forgotDesktopDialog() {
-    msgbox("custom-forgot", translate('Forget Password'), <div .form .set-password>
-            <div><span>{translate('Email')}:</span><input|text name="email" .outline-focus /></div>
-            <div><span>{translate('Verification code')}:</span><input|text name="code" /></div>
-            <div><span>{translate('New Password')}:</span><PasswordComponent name="password" /></div>
-            <div><span>{translate('Confirm password')}:</span><PasswordComponent name="confirm" /></div>
-            <div style="text-align:center; margin-top:0.8em;"><button .link-button .custom-event name="sendcode">{translate('Send code')}</button></div>
+    msgbox("custom-forgot", translate('Forget Password'), <div .form .account-form>
+            <div class="field"><label>{translate('Email')}</label><input|text name="email" .outline-focus /></div>
+            <div class="field"><label>{translate('Verification code')}</label><input|text name="code" /></div>
+            <div class="field"><label>{translate('New Password')}</label><PasswordComponent name="password" /></div>
+            <div class="field"><label>{translate('Confirm password')}</label><PasswordComponent name="confirm" /></div>
+            <div class="sendcode-btn"><button .custom-event name="sendcode">{translate('Send code')}</button></div>
         </div>, "", function(res=null, show_progress) {
             if (!res) return;
+            var me = this;
             var url = handler.get_api_server();
             if (res.name == 'sendcode') {
+                if (res.state.disabled) return " ";
                 var email = (this.getValues().email || '').trim();
                 if (!is_valid_email(email)) {
                     show_progress(false, translate('Enter a valid email address'));
@@ -1679,7 +1711,7 @@ function forgotDesktopDialog() {
                         return;
                     }
                     show_progress(false, translate('Verification code sent'));
-                    res.text = translate('Sent');
+                    startCountdown(res);
                 }, function(err, status) {
                     show_progress(false, translate(err));
                 });
@@ -1712,9 +1744,72 @@ function forgotDesktopDialog() {
                     return;
                 }
                 show_progress(false, translate('Password reset, please login with new password'));
+                self.timer(1600ms, function() { if (me.close) me.close(); });
             }, function(err, status) {
                 show_progress(false, translate(err));
             });
+            return " ";
+        }, msgbox_default_height, get_msgbox_width());
+}
+
+function changeEmailDesktopDialog() {
+    msgbox("custom-change-email", translate('Change email'), <div .form .account-form>
+            <div class="field"><label>{translate('Current password')}</label><PasswordComponent name="password" /></div>
+            <div class="field"><label>{translate('New Email')}</label><input|text name="email" .outline-focus /></div>
+            <div class="field"><label>{translate('Verification code')}</label><input|text name="code" /></div>
+            <div class="sendcode-btn"><button .custom-event name="sendcode">{translate('Send code')}</button></div>
+        </div>, "", function(res=null, show_progress) {
+            if (!res) return;
+            var me = this;
+            var url = handler.get_api_server();
+            if (res.name == 'sendcode') {
+                if (res.state.disabled) return " ";
+                var email = (this.getValues().email || '').trim();
+                if (!is_valid_email(email)) {
+                    show_progress(false, translate('Enter a valid email address'));
+                    return " ";
+                }
+                show_progress();
+                httpRequest(url + "/api/send-code", #post, {email: email, purpose: 'change_email'}, function(data) {
+                    if (data.error) {
+                        show_progress(false, translate(data.error));
+                        return;
+                    }
+                    show_progress(false, translate('Verification code sent'));
+                    startCountdown(res);
+                }, function(err, status) {
+                    show_progress(false, translate(err));
+                });
+                return " ";
+            }
+            var email = (res.email || '').trim();
+            var code = (res.code || '').trim();
+            var pass = res.password || '';
+            if (!is_valid_email(email)) {
+                show_progress(false, translate('Enter a valid email address'));
+                return " ";
+            }
+            if (!pass) {
+                show_progress(false, translate('Please enter the current password'));
+                return " ";
+            }
+            if (!code) {
+                show_progress(false, translate('Please enter the verification code'));
+                return " ";
+            }
+            show_progress();
+            httpRequest(url + "/api/change-email", #post, {new_email: email, code: code, password: pass}, function(data) {
+                if (data.error) {
+                    show_progress(false, translate(data.error));
+                    return;
+                }
+                show_progress(false, translate('Email changed successfully'));
+                if (data.user) set_local_user_info(data.user);
+                myIdMenu.update();
+                self.timer(1600ms, function() { if (me.close) me.close(); });
+            }, function(err, status) {
+                show_progress(false, translate(err));
+            }, getHttpHeaders());
             return " ";
         }, msgbox_default_height, get_msgbox_width());
 }

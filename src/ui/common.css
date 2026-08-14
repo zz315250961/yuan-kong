@@ -463,6 +463,93 @@ div#msgbox div.set-password input {
   font-size: 1em;
 }
 
+div#msgbox .account-form .field {
+  flow: vertical;
+  margin-bottom: 0.55em;
+}
+
+div#msgbox .account-form .field > label {
+  display: block;
+  margin-bottom: 0.15em;
+  color: color(light-text);
+  font-size: 0.9em;
+}
+
+div#msgbox .account-form input {
+  width: *;
+  font-size: 1em;
+}
+
+div#msgbox .account-form div.password {
+  width: *;
+}
+
+div#msgbox .account-form .account-links {
+  flow: horizontal;
+  horizontal-align: space-between;
+  margin-top: 0.2em;
+}
+
+div#msgbox .account-form .account-links button {
+  background: none;
+  border: none;
+  color: #2C8CFF;
+  cursor: pointer;
+  padding: 0.25em 0.4em;
+  font-size: 0.95em;
+}
+
+div#msgbox .account-form .account-links button:hover {
+  text-decoration: underline;
+}
+
+div#msgbox .account-form .account-divider {
+  flow: horizontal;
+  horizontal-align: center;
+  margin: 0.9em 0 0.4em;
+}
+
+div#msgbox .account-form .account-divider::before,
+div#msgbox .account-form .account-divider::after {
+  content: "";
+  width: *;
+  height: 1px;
+  background: color(border);
+  margin: auto 0.8em;
+}
+
+div#msgbox .account-form .account-divider span {
+  font-size: 0.85em;
+  color: color(light-text);
+  white-space: nowrap;
+}
+
+div#msgbox .account-form .wechat-btn {
+  width: *;
+  height: 2.2em;
+  margin-top: 0.4em;
+  border: color(border) 1px solid;
+  border-radius: 4px;
+  background: transparent;
+  color: color(text);
+  font-size: 0.95em;
+}
+
+div#msgbox .account-form .sendcode-btn {
+  flow: horizontal;
+  horizontal-align: space-between;
+  margin-top: 0.3em;
+}
+
+div#msgbox .account-form .sendcode-btn button {
+  background: none;
+  border: none;
+  color: #2C8CFF;
+  cursor: pointer;
+  font-size: 0.95em;
+  padding: 0.25em 0.4em;
+}
+
 .wrap-text {
   width: *;
   word-wrap: break-word;
