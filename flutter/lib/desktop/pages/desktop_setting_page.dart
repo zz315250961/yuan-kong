@@ -2125,7 +2125,8 @@ class _AccountState extends State<_Account> {
     return ListView(
       controller: scrollController,
       children: [
-        _Card(title: 'Account', children: [accountAction(), useInfo()]),
+        _Card(title: 'Account',
+            children: [accountAction(), changeEmailAction(), useInfo()]),
       ],
     ).marginOnly(bottom: _kListViewBottomMargin);
   }
@@ -2191,6 +2192,15 @@ class _AccountState extends State<_Account> {
             }),
           ),
         )).marginOnly(left: 18, top: 16);
+  }
+
+  Widget changeEmailAction() {
+    return Obx(() => Offstage(
+          offstage: gFFI.userModel.userName.value.isEmpty,
+          child: _Button(translate('Change email'), () {
+            changeEmailDialog();
+          }),
+        ));
   }
 
   Widget? _buildUserAvatar() {
@@ -2500,22 +2510,6 @@ class _AboutState extends State<_About> {
               SelectionArea(
                   child: Text('${translate('ID')}: $myId')
                       .marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com/privacy.html');
-                  },
-                  child: Text(
-                    translate('Privacy Statement'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com');
-                  },
-                  child: Text(
-                    translate('Website'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
               Container(
                 decoration: const BoxDecoration(color: Color(0xFF2c8cff)),
                 padding:
