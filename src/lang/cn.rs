@@ -238,6 +238,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Other login methods", "其他登录方式"),
         ("WeChat login (reserved)", "微信登录（预留）"),
         ("LinkRemote is Open", "LinkRemote 已打开"),
+        ("My devices", "我的设备"),
+        ("No devices yet", "暂无设备，重新登录账号后自动登记"),
         ("Verify", "验证"),
         ("Remember me", "记住我"),
         ("Trust this device", "信任此设备"),

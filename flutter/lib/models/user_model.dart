@@ -255,6 +255,34 @@ class UserModel {
     return user;
   }
 
+  /// 当前账号下所有设备（我的设备）。
+  /// throw [RequestException]
+  Future<List<Map<String, dynamic>>> getMyDevices() async {
+    final url = await bind.mainGetApiServer();
+    final resp = await http.get(
+      Uri.parse('$url/api/peers'),
+      headers: getHttpHeaders(),
+    );
+    final Map<String, dynamic> body;
+    try {
+      body = jsonDecode(decode_http_response(resp));
+    } catch (e) {
+      debugPrint("getMyDevices: jsonDecode failed: ${e.toString()}");
+      rethrow;
+    }
+    if (resp.statusCode != 200) {
+      throw RequestException(resp.statusCode, body['error'] ?? '');
+    }
+    if (body['error'] != null) {
+      throw RequestException(0, body['error']);
+    }
+    final list = body['data'];
+    if (list is! List) {
+      return [];
+    }
+    return list.whereType<Map<String, dynamic>>().toList();
+  }
+
   void _throwIfError(http.Response resp) {
     final Map<String, dynamic> body;
     try {

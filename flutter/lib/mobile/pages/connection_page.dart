@@ -13,6 +13,7 @@ import 'package:flutter_hbb/models/peer_model.dart';
 import '../../common.dart';
 import '../../common/widgets/peer_tab_page.dart';
 import '../../common/widgets/autocomplete.dart';
+import '../../common/widgets/dialog.dart';
 import '../../consts.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
@@ -378,4 +379,113 @@ class _ConnectionPageState extends State<ConnectionPage> {
     }
     super.dispose();
   }
+}
+
+/// 顶栏「我的设备」图标：查看同一账号下的所有设备。
+Widget myDevicesAction() {
+  return IconButton(
+    icon: const Icon(Icons.devices),
+    tooltip: translate('My devices'),
+    onPressed: () {
+      showMyDevicesDialog();
+    },
+  );
+}
+
+Future<void> showMyDevicesDialog() async {
+  var devices = <Map<String, dynamic>>[];
+  Object? error;
+  var loading = true;
+  await gFFI.dialogManager.show((setState, close, context) {
+    Future<void> load() async {
+      loading = true;
+      setState(() {});
+      try {
+        devices = await gFFI.userModel.getMyDevices();
+        error = null;
+      } catch (e) {
+        error = e;
+      }
+      loading = false;
+      setState(() {});
+    }
+
+    load();
+
+    Widget deviceIcon(String os) {
+      final o = os.toLowerCase();
+      if (o.contains('android')) return const Icon(Icons.smartphone);
+      if (o.contains('windows')) return const Icon(Icons.computer);
+      if (o.contains('mac')) return const Icon(Icons.laptop_mac);
+      if (o.contains('linux')) return const Icon(Icons.desktop_windows);
+      return const Icon(Icons.devices);
+    }
+
+    Widget content;
+    if (loading) {
+      content = const Padding(
+        padding: EdgeInsets.all(24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else if (error != null) {
+      content = Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(translate('Network error')),
+            TextButton(
+              onPressed: load,
+              child: Text(translate('Retry')),
+            ),
+          ],
+        ),
+      );
+    } else if (devices.isEmpty) {
+      content = Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          translate('No devices yet'),
+          textAlign: TextAlign.center,
+        ),
+      );
+    } else {
+      content = ListView.builder(
+        shrinkWrap: true,
+        itemCount: devices.length,
+        itemBuilder: (context, i) {
+          final d = devices[i];
+          final info = (d['info'] is Map<String, dynamic>)
+              ? (d['info'] as Map<String, dynamic>)
+              : <String, dynamic>{};
+          final name = (info['device_name'] ?? '').toString();
+          final os = (info['os'] ?? '').toString();
+          final id = (d['id'] ?? '').toString();
+          return ListTile(
+            leading: deviceIcon(os),
+            title: Text(name.isEmpty ? id : name),
+            subtitle: Text(id),
+            trailing: IconButton(
+              icon: const Icon(Icons.copy, size: 18),
+              tooltip: translate('Copy to clipboard'),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: id));
+                showToast(translate('Copied'));
+              },
+            ),
+          );
+        },
+      );
+    }
+
+    return CustomAlertDialog(
+      title: Text(translate('My devices')),
+      contentBoxConstraints: BoxConstraints(maxWidth: 360, maxHeight: 420),
+      content: content,
+      onCancel: close,
+      actions: [
+        dialogButton(translate('Close'), onPressed: close, isOutline: true),
+      ],
+    );
+  }, clickMaskDismiss: true, backDismiss: true);
 }

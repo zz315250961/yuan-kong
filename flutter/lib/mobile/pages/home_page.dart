@@ -49,7 +49,7 @@ class HomePageState extends State<HomePage> {
     _pages.clear();
     if (!bind.isIncomingOnly()) {
       _pages.add(ConnectionPage(
-        appBarActions: [],
+        appBarActions: [myDevicesAction()],
       ));
     }
     if (isAndroid && !bind.isOutgoingOnly()) {
