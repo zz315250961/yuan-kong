@@ -427,7 +427,15 @@ impl Client {
         };
 
         let switch_code = interface.get_switch_code();
-        if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
+        // 自建 OSS 服务器（hbbs）不支持 KeyExchange 安全握手；get_key() 在无授权
+        // key 时会把 key 回退为 RS_PUB_KEY，此时若再执行 secure_tcp，客户端会
+        // 一直等待服务器主动发 KeyExchange，最终 READ_TIMEOUT 超时报
+        // "Failed to secure tcp: deadline has elapsed"。
+        // 因此仅当配置了真正的授权 key（!= RS_PUB_KEY）时才做 secure_tcp。
+        if !key.is_empty()
+            && key != config::RS_PUB_KEY
+            && (!token.is_empty() || !switch_code.is_empty())
+        {
             secure_tcp(&mut socket, &key)
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
@@ -859,7 +867,12 @@ impl Client {
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
-            if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
+            // 与 connect_to_rendezvous_server 相同的处理：OSS hbbs 不支持
+            // KeyExchange，授权 key 为空时（key 回退为 RS_PUB_KEY）跳过 secure_tcp
+            if !key.is_empty()
+                && key != config::RS_PUB_KEY
+                && (!token.is_empty() || !switch_code.is_empty())
+            {
                 secure_tcp(&mut socket, key).await?;
             }
 
