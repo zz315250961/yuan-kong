@@ -237,6 +237,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("WeChat login coming soon", "微信登录即将上线，敬请期待"),
         ("Other login methods", "其他登录方式"),
         ("WeChat login (reserved)", "微信登录（预留）"),
+        ("LinkRemote is Open", "LinkRemote 已打开"),
         ("Verify", "验证"),
         ("Remember me", "记住我"),
         ("Trust this device", "信任此设备"),
