@@ -35,7 +35,7 @@ lazy_static! {
     // 远控定制：Kotlin MediaCodec 直连编码帧队列（H.264 硬编）
     static ref ENCODED_FRAMES: Mutex<VecDeque<EncodedFrame>> = Mutex::new(VecDeque::new());
     static ref ENCODED_CONFIG: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-    static ref MEDIA_CODEC_MODE: AtomicBool = AtomicBool::new(true);
+static ref MEDIA_CODEC_MODE: AtomicBool = AtomicBool::new(false);
 }
 
 const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(100);

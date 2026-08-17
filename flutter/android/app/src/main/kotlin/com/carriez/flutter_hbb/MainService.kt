@@ -212,7 +212,9 @@ class MainService : Service() {
     private val logTag = "LOG_SERVICE"
     // 远控定制：启用 Kotlin 原生 MediaCodec 直连编码（H.264 硬编），
     // 绕开 rustdesk ffmpeg 封装（该路径在这台设备上只有 11~22fps）
-    private val useVP9 = true
+    // 远控定制：MediaCodec 直连编码路径（v1.0.12）输出流控制端解码失败
+    // （Invalid data found），回退到 ImageReader 原始帧 + Rust ffmpeg 硬编路径
+    private val useVP9 = false
     private val binder = LocalBinder()
 
     private var reuseVirtualDisplay = Build.VERSION.SDK_INT > 33
