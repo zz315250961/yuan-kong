@@ -63,7 +63,8 @@ class UserModel {
     final url = await bind.mainGetApiServer();
     final body = {
       'id': await bind.mainGetMyId(),
-      'uuid': await bind.mainGetUuid()
+      'uuid': await bind.mainGetUuid(),
+      'deviceInfo': jsonDecode(bind.mainGetLoginDeviceInfo()),
     };
     if (refreshingUser) return;
     try {
@@ -281,6 +282,16 @@ class UserModel {
       return [];
     }
     return list.whereType<Map<String, dynamic>>().toList();
+  }
+
+  /// 删除当前账号下的设备记录。
+  Future<void> deleteMyDevice(String uuid) async {
+    final url = await bind.mainGetApiServer();
+    final resp = await http.delete(
+      Uri.parse('$url/api/peers/${Uri.encodeComponent(uuid)}'),
+      headers: getHttpHeaders(),
+    );
+    _throwIfError(resp);
   }
 
   void _throwIfError(http.Response resp) {

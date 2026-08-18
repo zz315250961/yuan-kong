@@ -424,11 +424,23 @@ class _MyDevicesDialogContentState extends State<_MyDevicesDialogContent> {
   var _devices = <Map<String, dynamic>>[];
   Object? _error;
   var _loading = true;
+  var _myId = '';
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      _myId = (await bind.mainGetMyId()).replaceAll(' ', '');
+    } catch (e) {
+      debugPrint('my devices: get my id failed: $e');
+    }
+    if (mounted) {
+      await _load();
+    }
   }
 
   Future<void> _load() async {
@@ -468,6 +480,49 @@ class _MyDevicesDialogContentState extends State<_MyDevicesDialogContent> {
     if (o.contains('mac')) return const Icon(Icons.laptop_mac);
     if (o.contains('linux')) return const Icon(Icons.desktop_windows);
     return const Icon(Icons.devices);
+  }
+
+  bool _isSelf(String id) {
+    final normalized = id.replaceAll(' ', '');
+    return _myId.isNotEmpty && normalized == _myId;
+  }
+
+  Future<void> _deleteDevice(Map<String, dynamic> device) async {
+    final uuid = (device['uuid'] ?? '').toString();
+    final id = (device['id'] ?? '').toString();
+    final info = (device['info'] is Map<String, dynamic>)
+        ? (device['info'] as Map<String, dynamic>)
+        : <String, dynamic>{};
+    final name = (info['device_name'] ?? '').toString();
+    if (uuid.isEmpty) {
+      showToast(translate('Cannot connect to self'));
+      return;
+    }
+    CommonConfirmDialog(
+      gFFI.dialogManager,
+      '${translate('Remove device')}：${name.isEmpty ? id : name}?',
+      () async {
+        try {
+          await gFFI.userModel.deleteMyDevice(uuid);
+          if (mounted) {
+            setState(() {
+              _devices.removeWhere((d) => (d['uuid'] ?? '').toString() == uuid);
+            });
+          }
+          showToast(translate('Removed'));
+        } catch (e) {
+          showToast(translate('Failed'));
+        }
+      },
+    );
+  }
+
+  Future<void> _connectDevice(String id) async {
+    if (_isSelf(id)) {
+      showToast(translate('Cannot connect to self'));
+      return;
+    }
+    connect(context, id);
   }
 
   @override
@@ -511,31 +566,62 @@ class _MyDevicesDialogContentState extends State<_MyDevicesDialogContent> {
         ),
       );
     }
-    return ListView.builder(
-      shrinkWrap: true,
-      itemCount: _devices.length,
-      itemBuilder: (context, i) {
-        final d = _devices[i];
-        final info = (d['info'] is Map<String, dynamic>)
-            ? (d['info'] as Map<String, dynamic>)
-            : <String, dynamic>{};
-        final name = (info['device_name'] ?? '').toString();
-        final os = (info['os'] ?? '').toString();
-        final id = (d['id'] ?? '').toString();
-        return ListTile(
-          leading: _deviceIcon(os),
-          title: Text(name.isEmpty ? id : name),
-          subtitle: Text(id),
-          trailing: IconButton(
-            icon: const Icon(Icons.copy, size: 18),
-            tooltip: translate('Copy to clipboard'),
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: id));
-              showToast(translate('Copied'));
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            tooltip: translate('Refresh'),
+            onPressed: _load,
+          ),
+        ),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _devices.length,
+            itemBuilder: (context, i) {
+              final d = _devices[i];
+              final info = (d['info'] is Map<String, dynamic>)
+                  ? (d['info'] as Map<String, dynamic>)
+                  : <String, dynamic>{};
+              final name = (info['device_name'] ?? '').toString();
+              final os = (info['os'] ?? '').toString();
+              final id = (d['id'] ?? '').toString();
+              final self = _isSelf(id);
+              return ListTile(
+                leading: _deviceIcon(os),
+                title: Text(name.isEmpty ? id : name),
+                subtitle: Text(self ? '${id}（${translate('This device')}）' : id),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.settings_remote, size: 18),
+                      tooltip: translate('Connect'),
+                      onPressed: self ? null : () => _connectDevice(id),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      tooltip: translate('Copy to clipboard'),
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: id));
+                        showToast(translate('Copied'));
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      tooltip: translate('Remove'),
+                      onPressed: () => _deleteDevice(d),
+                    ),
+                  ],
+                ),
+              );
             },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 }

@@ -129,6 +129,8 @@ class _PeerTabPageState extends State<PeerTabPage>
                 )),
               ),
             ).paddingOnly(right: stateGlobal.isPortrait.isTrue ? 0 : 12)),
+        if (stateGlobal.isPortrait.isTrue)
+          const PeerSearchBar().paddingSymmetric(horizontal: 2, vertical: 6),
         _createPeersView(),
       ],
     );
@@ -594,7 +596,6 @@ class _PeerTabPageState extends State<PeerTabPage>
     final leftActionsSize =
         (leftIconSize + (4 + 4) * 2) * model.visibleEnabledOrderedIndexs.length;
     final availableWidth = screenWidth - 10 * 2 - leftActionsSize - 2 * 2;
-    final searchWidth = 120;
     final otherActionWidth = 18 + 10;
 
     dropDown(List<Widget> menus) {
@@ -631,9 +632,8 @@ class _PeerTabPageState extends State<PeerTabPage>
       );
     }
 
-    // Always show search, refresh
+    // Refresh only；search 在手机竖屏时单独占一行
     List<Widget> actions = [
-      const PeerSearchBar(),
       if (model.currentTab == PeerTabIndex.ab.index)
         _createRefresh(
             index: PeerTabIndex.ab, loading: gFFI.abModel.currentAbLoading),
@@ -647,7 +647,6 @@ class _PeerTabPageState extends State<PeerTabPage>
       if (model.currentTab == PeerTabIndex.ab.index) _toggleTags()
     ];
     final rightWidth = availableWidth -
-        searchWidth -
         (actions.length == 2 ? otherActionWidth : 0);
     final availablePositions = rightWidth ~/ otherActionWidth;
 
