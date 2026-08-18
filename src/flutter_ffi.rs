@@ -2350,6 +2350,21 @@ pub fn main_goto_install() -> SyncReturn<bool> {
     SyncReturn(true)
 }
 
+pub fn main_uninstall_app() -> SyncReturn<bool> {
+    #[cfg(windows)]
+    {
+        if let Err(err) = crate::platform::uninstall_me(true) {
+            log::error!("Failed to uninstall from UI: {}", err);
+            return SyncReturn(false);
+        }
+        SyncReturn(true)
+    }
+    #[cfg(not(windows))]
+    {
+        SyncReturn(false)
+    }
+}
+
 pub fn main_get_new_version() -> SyncReturn<String> {
     SyncReturn(get_new_version())
 }

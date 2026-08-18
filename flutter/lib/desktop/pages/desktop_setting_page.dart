@@ -1272,6 +1272,23 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
             if (usePassword && !isChangePermanentPasswordDisabled())
               _SubButton('Set permanent password', setPasswordDialog,
                   permEnabled && !locked),
+            if (usePassword)
+              FutureBuilder<String>(
+                future: bind.mainGetCommon(key: 'permanent-password-set'),
+                builder: (context, snapshot) {
+                  final set = snapshot.data == 'true';
+                  return Row(
+                    children: [
+                      Icon(Icons.lock_outline, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${translate('Permanent password')}: '
+                        '${set ? translate('Set') : translate('Not set')}',
+                      ),
+                    ],
+                  ).marginOnly(left: _kContentHSubMargin, top: 6);
+                },
+              ),
             // if (usePassword)
             //   hide_cm(!locked).marginOnly(left: _kContentHSubMargin - 6),
             if (usePassword) radios[2],
@@ -2525,7 +2542,24 @@ class _AboutState extends State<_About> {
                     ),
                   ],
                 )),
-              ).marginSymmetric(vertical: 4.0)
+              ).marginSymmetric(vertical: 4.0),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () {
+                    CommonConfirmDialog(
+                      gFFI.dialogManager,
+                      '确定要卸载 LinkRemote 吗？\n'
+                      '将停止服务、关闭程序、删除安装目录与相关配置（含注册表）。',
+                      () {
+                        bind.mainUninstallApp();
+                      },
+                    );
+                  },
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('卸载 LinkRemote'),
+                ),
+              ).marginOnly(top: 8),
             ],
           ).marginOnly(left: _kContentHMargin)
         ]),
