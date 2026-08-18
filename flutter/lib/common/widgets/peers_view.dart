@@ -94,6 +94,7 @@ class _PeersViewState extends State<_PeersView>
     LoadEvent.favorite: 'empty_favorite_tip',
     LoadEvent.lan: 'empty_lan_tip',
     LoadEvent.addressBook: 'empty_address_book_tip',
+    LoadEvent.group: 'empty_group_tip',
   });
   final space = (isDesktop || isWebDesktop) ? 12.0 : 8.0;
   final _curPeers = <String>{};

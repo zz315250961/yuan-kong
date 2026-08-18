@@ -61,13 +61,6 @@ class _DropDownAction extends StatelessWidget {
           final isAllowNumericOneTimePassword =
               gFFI.serverModel.allowNumericOneTimePassword;
           return [
-            if (!isChangeIdDisabled())
-              PopupMenuItem(
-                enabled: gFFI.serverModel.connectStatus > 0,
-                value: "changeID",
-                child: Text(translate("Change ID")),
-              ),
-            if (!isChangeIdDisabled()) const PopupMenuDivider(),
             PopupMenuItem(
               value: 'AcceptSessionsViaPassword',
               child: listTile(
@@ -132,9 +125,7 @@ class _DropDownAction extends StatelessWidget {
           ];
         },
         onSelected: (value) async {
-          if (value == "changeID") {
-            changeIdDialog();
-          } else if (value == "setPermanentPassword") {
+          if (value == "setPermanentPassword") {
             setPasswordDialog();
           } else if (value == "setTemporaryPasswordLength") {
             setTemporaryPasswordLengthDialog(gFFI.dialogManager);
@@ -530,10 +521,6 @@ class ServerInfo extends StatelessWidget {
               ),
               IconButton(
                   visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => changeIdDialog()),
-              IconButton(
-                  visualDensity: VisualDensity.compact,
                   icon: Icon(Icons.copy_outlined),
                   onPressed: () {
                     copyToClipboard(model.serverId.value.text.trim());
@@ -562,10 +549,6 @@ class ServerInfo extends StatelessWidget {
                           onPressed: () => bind.mainUpdateTemporaryPassword()),
                       IconButton(
                           visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.edit),
-                          onPressed: () => setPasswordDialog()),
-                      IconButton(
-                          visualDensity: VisualDensity.compact,
                           icon: Icon(Icons.copy_outlined),
                           onPressed: () {
                             copyToClipboard(
@@ -573,9 +556,85 @@ class ServerInfo extends StatelessWidget {
                           })
                     ])
             ]).marginOnly(left: 40, bottom: 15),
+            const _PermanentPasswordRow(),
             ConnectionStateNotification()
           ],
         ));
+  }
+}
+
+class _PermanentPasswordRow extends StatefulWidget {
+  const _PermanentPasswordRow({Key? key}) : super(key: key);
+
+  @override
+  State<_PermanentPasswordRow> createState() => _PermanentPasswordRowState();
+}
+
+class _PermanentPasswordRowState extends State<_PermanentPasswordRow> {
+  var _isSet = false;
+  var _checked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    final v = await bind.mainGetCommon(key: "permanent-password-set");
+    if (!mounted) return;
+    setState(() {
+      _isSet = v == "true";
+      _checked = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_checked) {
+      return const SizedBox.shrink();
+    }
+    const double iconMarginRight = 15;
+    const double iconSize = 24;
+    const TextStyle textStyleHeading = TextStyle(
+        fontSize: 16.0, fontWeight: FontWeight.bold, color: Colors.grey);
+    const TextStyle textStyleValue =
+        TextStyle(fontSize: 25.0, fontWeight: FontWeight.bold);
+    return Column(
+      children: [
+        Row(children: [
+          const Icon(Icons.lock_person_outline,
+                  color: Colors.grey, size: iconSize)
+              .marginOnly(right: iconMarginRight),
+          Text(
+            translate('Permanent password'),
+            style: textStyleHeading,
+          )
+        ]),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(
+            _isSet ? translate('Set') : translate('Not set'),
+            style: textStyleValue,
+          ),
+          Row(children: [
+            IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.edit),
+                onPressed: () => setPasswordDialog()),
+            IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.copy_outlined),
+                color: _isSet ? null : Colors.grey,
+                onPressed: _isSet
+                    ? () {
+                        showToast(
+                            translate('Permanent password cannot be copied'));
+                      }
+                    : null),
+          ])
+        ]).marginOnly(left: 40, bottom: 15),
+      ],
+    );
   }
 }
 

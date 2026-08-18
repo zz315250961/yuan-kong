@@ -282,11 +282,18 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   /// Callback for the connect button.
   /// Connects to the selected peer.
-  void onConnect(
+  Future<void> onConnect(
       {bool isFileTransfer = false,
       bool isViewCamera = false,
       bool isTerminal = false}) {
-    var id = _idController.id;
+    var id = _idController.id.replaceAll(' ', '');
+    if (id.isNotEmpty) {
+      final myId = (await bind.mainGetMyId()).replaceAll(' ', '');
+      if (id == myId) {
+        showToast(translate('Cannot connect to self'));
+        return;
+      }
+    }
     connect(context, id,
         isFileTransfer: isFileTransfer,
         isViewCamera: isViewCamera,

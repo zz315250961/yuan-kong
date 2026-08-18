@@ -3344,6 +3344,35 @@ String getDesktopTabLabel(String peerId, String alias) {
   return label;
 }
 
+/// 聊天会话中展示的对方名称：优先地址簿备注，其次设备名/主机名，最后回退到设备 ID。
+String getChatDisplayName(String peerId, String fallbackName) {
+  try {
+    final peer = bind.mainGetPeerSync(id: peerId);
+    if (peer.isNotEmpty) {
+      final config = jsonDecode(peer);
+      final options = config['options'];
+      final info = config['info'];
+      if (options is Map &&
+          options['alias'] is String &&
+          (options['alias'] as String).isNotEmpty) {
+        return options['alias'] as String;
+      }
+      if (info is Map &&
+          info['hostname'] is String &&
+          (info['hostname'] as String).isNotEmpty) {
+        return info['hostname'] as String;
+      }
+    }
+  } catch (e) {
+    debugPrint('Failed to get peer info for chat display: $e');
+  }
+  final fallback = fallbackName.trim();
+  if (fallback.isNotEmpty && fallback != peerId) {
+    return fallback;
+  }
+  return peerId;
+}
+
 sessionRefreshVideo(SessionID sessionId, PeerInfo pi) async {
   if (pi.currentDisplay == kAllDisplayValue) {
     for (int i = 0; i < pi.displays.length; i++) {

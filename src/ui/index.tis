@@ -18,7 +18,6 @@ const hide_proxy_settings = handler.get_builtin_option("hide-proxy-settings") ==
 const hide_websocket_settings = handler.get_builtin_option("hide-websocket-settings") == "Y";
 const hide_stop_service = handler.get_builtin_option("hide-stop-service") == "Y";
 const disable_change_permanent_password = handler.get_builtin_option("disable-change-permanent-password") == "Y";
-const disable_change_id = handler.get_builtin_option("disable-change-id") == "Y";
 
 // html min-width, min-height not working on mac, below works for all
 if (incoming_only) {
@@ -538,12 +537,10 @@ class MyIdMenu: Reactor.Component {
                 {!disable_settings && is_win && handler.is_installed() ? <ShareRdp /> : ""}
                 {!disable_settings && <DirectServer />}
                 {!disable_settings && false && handler.using_public_server() && <li #allow-always-relay><span>{svg_checkmark}</span>{translate('Always connect via relay')}</li>}
-                {!disable_change_id && handler.is_ok_change_id() ? <div .separator /> : ""}
                 {!disable_account && (accountLabel ?
                 <li #logout>{translate('Logout')} ({accountLabel})</li> :
                 <li #login>{translate('Login')}</li>)}
                 {!disable_account && accountLabel ? <li #change-email>{translate('Change email')}</li> : ""}
-                {!disable_change_id && !disable_settings && handler.is_ok_change_id() && key_confirmed && connect_status > 0 ? <li #change-id>{translate('Change ID')}</li> : ""}
                 <div .separator />
                 <li #allow-darktheme><span>{svg_checkmark}</span>{translate('Dark Theme')}</li>
                 <Languages />
@@ -637,31 +634,6 @@ class MyIdMenu: Reactor.Component {
             handler.set_option("disable-udp", handler.get_option("disable-udp") == "Y" ? "N" : "Y");
         } else if (me.id == "stop-service") {
             handler.set_option("stop-service", service_stopped ? default_option_no : "Y");
-        } else if (me.id == "change-id") {
-            var id_label_width = incoming_only ? "50px" : "100px";
-            var input_width = incoming_only ? (incoming_only_width - 20) + "px" : "250px";
-            msgbox("custom-id", translate("Change ID"), "<div .form .set-password> \
-            <div>" + translate('id_change_tip') + " </div> \
-            <div><span style='width: " + id_label_width + "; display:inline-block'>ID: </span><input|text .outline-focus style='width: " + input_width + "' name='id' /></div> \
-            </div> \
-            ", "", function(res=null, show_progress) {
-                if (!res) return;
-                show_progress();
-                var id = (res.id || "").trim();
-                if (!id) return;
-                if (id == my_id) return;
-                handler.change_id(id);
-                function check_status() {
-                    var status = handler.get_async_job_status();
-                    if (status == " ") self.timer(0.1s, check_status);
-                    else {
-                        if (status) show_progress(false, translate(status));
-                        else show_progress(-1);
-                    }
-                }
-                check_status();
-                return " ";
-            }, msgbox_default_height, get_msgbox_width());
         } else if (me.id == "allow-darktheme") {
             updateTheme();
         } else if (me.id == "about") {

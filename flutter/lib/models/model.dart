@@ -477,7 +477,24 @@ class FfiModel with ChangeNotifier {
         if (desktopType == DesktopType.remote ||
             desktopType == DesktopType.viewCamera ||
             isMobile) {
-          parent.target?.recordingModel.updateStatus(evt['start'] == 'true');
+          final recording = evt['start'] == 'true';
+          parent.target?.recordingModel.updateStatus(recording);
+          if (recording) {
+            showToast(translate('Recording started'));
+          } else {
+            String dir = '';
+            try {
+              dir = bind.mainVideoSaveDirectory(root: false);
+            } catch (e) {
+              debugPrint('Failed to get video save directory: $e');
+            }
+            var tip = translate('Recording stopped at');
+            if (tip.contains('%s')) {
+              tip =
+                  tip.replaceFirst('%s', dir.isEmpty ? '（未知目录）' : dir);
+            }
+            showToast(tip);
+          }
         }
       } else if (name == "printer_request") {
         _handlePrinterRequest(evt, sessionId, peerId);
@@ -915,11 +932,11 @@ class FfiModel with ChangeNotifier {
     }
 
     if (type == 're-input-password') {
-      wrongPasswordDialog(sessionId, dialogManager, type, title, text);
+      wrongPasswordDialog(sessionId, dialogManager, type, title, text, peerId);
     } else if (type == 'input-2fa') {
       enter2FaDialog(sessionId, dialogManager);
     } else if (type == 'input-password') {
-      enterPasswordDialog(sessionId, dialogManager);
+      enterPasswordDialog(sessionId, dialogManager, peerId: peerId);
     } else if (type == 'session-login' || type == 'session-re-login') {
       enterUserLoginDialog(sessionId, dialogManager, 'login_linux_tip', true);
     } else if (type == 'session-login-password') {

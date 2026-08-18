@@ -52,6 +52,16 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
         page: DesktopHomePage(
           key: const ValueKey(kTabLabelHomePage),
         )));
+    // 桌面端默认同时展示「主页」和「设置」两个入口，无需再点右上角菜单
+    tabController.add(TabInfo(
+        key: kTabLabelSettingPage,
+        label: kTabLabelSettingPage,
+        selectedIcon: Icons.build_sharp,
+        unselectedIcon: Icons.build_outlined,
+        page: DesktopSettingPage(
+          key: const ValueKey(kTabLabelSettingPage),
+          initialTabkey: SettingsTabKey.general,
+        )));
     if (bind.isIncomingOnly()) {
       tabController.onSelected = (key) {
         if (key == kTabLabelHomePage) {

@@ -100,8 +100,13 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   /// Callback for the connect button.
   /// Connects to the selected peer.
-  void onConnect() {
-    var id = _idController.id;
+  Future<void> onConnect() async {
+    final id = _idController.id.replaceAll(' ', '');
+    final myId = (await bind.mainGetMyId()).replaceAll(' ', '');
+    if (id.isNotEmpty && id == myId) {
+      showToast(translate('Cannot connect to self'));
+      return;
+    }
     connect(context, id);
   }
 
@@ -394,99 +399,134 @@ Widget myDevicesAction() {
 }
 
 Future<void> showMyDevicesDialog() async {
-  var devices = <Map<String, dynamic>>[];
-  Object? error;
-  var loading = true;
   await gFFI.dialogManager.show((setState, close, context) {
-    Future<void> load() async {
-      loading = true;
-      setState(() {});
-      try {
-        devices = await gFFI.userModel.getMyDevices();
-        error = null;
-      } catch (e) {
-        error = e;
-      }
-      loading = false;
-      setState(() {});
-    }
-
-    load();
-
-    Widget deviceIcon(String os) {
-      final o = os.toLowerCase();
-      if (o.contains('android')) return const Icon(Icons.smartphone);
-      if (o.contains('windows')) return const Icon(Icons.computer);
-      if (o.contains('mac')) return const Icon(Icons.laptop_mac);
-      if (o.contains('linux')) return const Icon(Icons.desktop_windows);
-      return const Icon(Icons.devices);
-    }
-
-    Widget content;
-    if (loading) {
-      content = const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    } else if (error != null) {
-      content = Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(translate('Network error')),
-            TextButton(
-              onPressed: load,
-              child: Text(translate('Retry')),
-            ),
-          ],
-        ),
-      );
-    } else if (devices.isEmpty) {
-      content = Padding(
-        padding: const EdgeInsets.all(16),
-        child: Text(
-          translate('No devices yet'),
-          textAlign: TextAlign.center,
-        ),
-      );
-    } else {
-      content = ListView.builder(
-        shrinkWrap: true,
-        itemCount: devices.length,
-        itemBuilder: (context, i) {
-          final d = devices[i];
-          final info = (d['info'] is Map<String, dynamic>)
-              ? (d['info'] as Map<String, dynamic>)
-              : <String, dynamic>{};
-          final name = (info['device_name'] ?? '').toString();
-          final os = (info['os'] ?? '').toString();
-          final id = (d['id'] ?? '').toString();
-          return ListTile(
-            leading: deviceIcon(os),
-            title: Text(name.isEmpty ? id : name),
-            subtitle: Text(id),
-            trailing: IconButton(
-              icon: const Icon(Icons.copy, size: 18),
-              tooltip: translate('Copy to clipboard'),
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: id));
-                showToast(translate('Copied'));
-              },
-            ),
-          );
-        },
-      );
-    }
-
     return CustomAlertDialog(
       title: Text(translate('My devices')),
       contentBoxConstraints: BoxConstraints(maxWidth: 360, maxHeight: 420),
-      content: content,
+      content: const _MyDevicesDialogContent(),
       onCancel: close,
       actions: [
         dialogButton(translate('Close'), onPressed: close, isOutline: true),
       ],
     );
   }, clickMaskDismiss: true, backDismiss: true);
+}
+
+class _MyDevicesDialogContent extends StatefulWidget {
+  const _MyDevicesDialogContent({Key? key}) : super(key: key);
+
+  @override
+  State<_MyDevicesDialogContent> createState() =>
+      _MyDevicesDialogContentState();
+}
+
+class _MyDevicesDialogContentState extends State<_MyDevicesDialogContent> {
+  var _devices = <Map<String, dynamic>>[];
+  Object? _error;
+  var _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final devices = await gFFI.userModel.getMyDevices();
+      if (!mounted) return;
+      setState(() {
+        _devices = devices;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
+    }
+  }
+
+  Widget _deviceIcon(String os) {
+    final o = os.toLowerCase();
+    if (o.contains('android')) return const Icon(Icons.smartphone);
+    if (o.contains('windows')) return const Icon(Icons.computer);
+    if (o.contains('mac')) return const Icon(Icons.laptop_mac);
+    if (o.contains('linux')) return const Icon(Icons.desktop_windows);
+    return const Icon(Icons.devices);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (!gFFI.userModel.isLogin) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          translate('Please login first'),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(translate('Network error')),
+            TextButton(
+              onPressed: _load,
+              child: Text(translate('Retry')),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_devices.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          translate('No devices yet'),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return ListView.builder(
+      shrinkWrap: true,
+      itemCount: _devices.length,
+      itemBuilder: (context, i) {
+        final d = _devices[i];
+        final info = (d['info'] is Map<String, dynamic>)
+            ? (d['info'] as Map<String, dynamic>)
+            : <String, dynamic>{};
+        final name = (info['device_name'] ?? '').toString();
+        final os = (info['os'] ?? '').toString();
+        final id = (d['id'] ?? '').toString();
+        return ListTile(
+          leading: _deviceIcon(os),
+          title: Text(name.isEmpty ? id : name),
+          subtitle: Text(id),
+          trailing: IconButton(
+            icon: const Icon(Icons.copy, size: 18),
+            tooltip: translate('Copy to clipboard'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: id));
+              showToast(translate('Copied'));
+            },
+          ),
+        );
+      },
+    );
+  }
 }

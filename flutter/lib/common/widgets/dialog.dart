@@ -898,7 +898,8 @@ class _PasswordWidgetState extends State<PasswordWidget> {
 }
 
 void wrongPasswordDialog(SessionID sessionId,
-    OverlayDialogManager dialogManager, type, title, text) {
+    OverlayDialogManager dialogManager, type, title, text,
+    [String? peerId]) {
   dialogManager.dismissAll();
   dialogManager.show((setState, close, context) {
     cancel() {
@@ -907,7 +908,7 @@ void wrongPasswordDialog(SessionID sessionId,
     }
 
     submit() {
-      enterPasswordDialog(sessionId, dialogManager);
+      enterPasswordDialog(sessionId, dialogManager, peerId: peerId);
     }
 
     return CustomAlertDialog(
@@ -930,11 +931,13 @@ void wrongPasswordDialog(SessionID sessionId,
 }
 
 void enterPasswordDialog(
-    SessionID sessionId, OverlayDialogManager dialogManager) async {
+    SessionID sessionId, OverlayDialogManager dialogManager,
+    {String? peerId}) async {
   await _connectDialog(
     sessionId,
     dialogManager,
     passwordController: TextEditingController(),
+    peerId: peerId,
   );
 }
 
@@ -977,6 +980,7 @@ _connectDialog(
   TextEditingController? passwordController,
   String? osAccountDescTip,
   bool canRememberAccount = true,
+  String? peerId,
 }) async {
   final errUsername = ''.obs;
   var rememberPassword = false;
@@ -1116,9 +1120,18 @@ _connectDialog(
       if (passwordController == null) {
         return Offstage();
       }
+      var tip = translate('verify_rustdesk_password_tip');
+      final id = (peerId ?? '').trim();
+      if (tip.contains('%s')) {
+        if (id.isNotEmpty) {
+          tip = tip.replaceFirst('%s', id);
+        } else {
+          tip = tip.replaceAll('%s', '');
+        }
+      }
       return Column(
         children: [
-          descWidget(translate('verify_rustdesk_password_tip')),
+          descWidget(tip),
           PasswordWidget(
             controller: passwordController,
             autoFocus: osUsernameController == null,

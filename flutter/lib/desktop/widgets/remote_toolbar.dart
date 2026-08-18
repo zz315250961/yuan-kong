@@ -944,6 +944,7 @@ class _PinMenu extends StatelessWidget {
       () => _IconMenuButton(
         assetName: state.pin ? "assets/pinned.svg" : "assets/unpinned.svg",
         tooltip: state.pin ? 'Unpin Toolbar' : 'Pin Toolbar',
+        label: 'toolbar_pin',
         onPressed: state.switchPin,
         color:
             state.pin ? _ToolbarTheme.blueColor : _ToolbarTheme.inactiveColor,
@@ -965,6 +966,7 @@ class _MobileActionMenu extends StatelessWidget {
     return Obx(() => _IconMenuButton(
           assetName: 'assets/actions_mobile.svg',
           tooltip: 'Mobile Actions',
+          label: 'toolbar_mobile_actions',
           onPressed: () => ffi.dialogManager.setMobileActionsOverlayVisible(
               !ffi.dialogManager.mobileActionsOverlayVisible.value),
           color: ffi.dialogManager.mobileActionsOverlayVisible.isTrue
@@ -1098,6 +1100,7 @@ class _MonitorMenu extends StatelessWidget {
     return _IconSubmenuButton(
         tooltip: 'Select Monitor',
         icon: monitorsIcon,
+        label: 'toolbar_monitor',
         ffi: ffi,
         width: width.value,
         color: _ToolbarTheme.blueColor,
@@ -1314,6 +1317,7 @@ class _ControlMenu extends StatelessWidget {
     return _IconSubmenuButton(
         tooltip: 'Control Actions',
         svg: "assets/actions.svg",
+        label: 'toolbar_control',
         color: _ToolbarTheme.blueColor,
         hoverColor: _ToolbarTheme.hoverBlueColor,
         ffi: ffi,
@@ -1591,6 +1595,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
     return _IconSubmenuButton(
       tooltip: 'Display Settings',
       svg: "assets/display.svg",
+      label: 'toolbar_display',
       ffi: widget.ffi,
       color: _ToolbarTheme.blueColor,
       hoverColor: _ToolbarTheme.hoverBlueColor,
@@ -2340,6 +2345,7 @@ class _KeyboardMenu extends StatelessWidget {
     return _IconSubmenuButton(
         tooltip: 'Keyboard Settings',
         svg: "assets/keyboard_mouse.svg",
+        label: 'toolbar_keyboard',
         ffi: ffi,
         color: _ToolbarTheme.blueColor,
         hoverColor: _ToolbarTheme.hoverBlueColor,
@@ -2607,6 +2613,7 @@ class _ChatMenuState extends State<_ChatMenu> {
           tooltip: 'Chat',
           key: chatButtonKey,
           svg: 'assets/chat.svg',
+          label: 'toolbar_chat',
           ffi: widget.ffi,
           color: _ToolbarTheme.blueColor,
           hoverColor: _ToolbarTheme.hoverBlueColor,
@@ -2618,6 +2625,7 @@ class _ChatMenuState extends State<_ChatMenu> {
     return _IconMenuButton(
       assetName: 'assets/message_24dp_5F6368.svg',
       tooltip: 'Text chat',
+      label: 'toolbar_chat',
       key: chatButtonKey,
       onPressed: _textChatOnPressed,
       color: _ToolbarTheme.blueColor,
@@ -2712,6 +2720,7 @@ class _VoiceCallMenu extends StatelessWidget {
             return _IconSubmenuButton(
               tooltip: 'Voice call',
               svg: 'assets/voice_call.svg',
+              label: 'toolbar_voice',
               color: _ToolbarTheme.blueColor,
               hoverColor: _ToolbarTheme.hoverBlueColor,
               menuChildrenGetter: menuChildrenGetter,
@@ -2728,6 +2737,7 @@ class _VoiceCallMenu extends StatelessWidget {
     return _IconMenuButton(
       assetName: "assets/call_wait.svg",
       tooltip: "Waiting",
+      label: 'toolbar_voice',
       onPressed: () => bind.sessionCloseVoiceCall(sessionId: ffi.sessionId),
       color: _ToolbarTheme.redColor,
       hoverColor: _ToolbarTheme.hoverRedColor,
@@ -2752,6 +2762,7 @@ class _RecordMenu extends StatelessWidget {
       tooltip: recordingModel.start
           ? 'Stop session recording'
           : 'Start session recording',
+      label: 'toolbar_record',
       onPressed: () => recordingModel.toggle(),
       color: recordingModel.start
           ? _ToolbarTheme.redColor
@@ -2774,6 +2785,7 @@ class _CloseMenu extends StatelessWidget {
     return _IconMenuButton(
       assetName: 'assets/close.svg',
       tooltip: 'Close',
+      label: 'toolbar_close',
       onPressed: () async {
         if (await showConnEndAuditDialogCloseCanceled(ffi: ffi)) {
           return;
@@ -2790,6 +2802,7 @@ class _IconMenuButton extends StatefulWidget {
   final String? assetName;
   final Widget? icon;
   final String tooltip;
+  final String? label;
   final Color color;
   final Color hoverColor;
   final VoidCallback? onPressed;
@@ -2802,6 +2815,7 @@ class _IconMenuButton extends StatefulWidget {
     this.assetName,
     this.icon,
     required this.tooltip,
+    this.label,
     required this.color,
     required this.hoverColor,
     required this.onPressed,
@@ -2828,9 +2842,39 @@ class _IconMenuButtonState extends State<_IconMenuButton> {
           width: _ToolbarTheme.buttonSize,
           height: _ToolbarTheme.buttonSize,
         );
+    final iconCircle = Material(
+        type: MaterialType.transparency,
+        child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(_ToolbarTheme.iconRadius),
+              color: hover ? widget.hoverColor : widget.color,
+            ),
+            child: SizedBox(
+                width: _ToolbarTheme.buttonSize,
+                height: _ToolbarTheme.buttonSize,
+                child: icon)));
+    final content = widget.label == null
+        ? iconCircle
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              iconCircle,
+              const SizedBox(height: 3),
+              Text(
+                translate(widget.label!),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  height: 1.1,
+                ),
+              ),
+            ],
+          );
     var button = SizedBox(
-      width: widget.width ?? _ToolbarTheme.buttonSize,
-      height: _ToolbarTheme.buttonSize,
+      width: widget.width ??
+          (widget.label != null ? 64.0 : _ToolbarTheme.buttonSize),
       child: MenuItemButton(
           style: ButtonStyle(
               backgroundColor: MaterialStatePropertyAll(Colors.transparent),
@@ -2842,15 +2886,7 @@ class _IconMenuButtonState extends State<_IconMenuButton> {
           onPressed: widget.onPressed,
           child: Tooltip(
             message: translate(widget.tooltip),
-            child: Material(
-                type: MaterialType.transparency,
-                child: Ink(
-                    decoration: BoxDecoration(
-                      borderRadius:
-                          BorderRadius.circular(_ToolbarTheme.iconRadius),
-                      color: hover ? widget.hoverColor : widget.color,
-                    ),
-                    child: icon)),
+            child: content,
           )),
     ).marginSymmetric(
         horizontal: widget.hMargin ?? _ToolbarTheme.buttonHMargin,
@@ -2869,6 +2905,7 @@ class _IconMenuButtonState extends State<_IconMenuButton> {
 
 class _IconSubmenuButton extends StatefulWidget {
   final String tooltip;
+  final String? label;
   final String? svg;
   final Widget? icon;
   final Color color;
@@ -2883,6 +2920,7 @@ class _IconSubmenuButton extends StatefulWidget {
     this.svg,
     this.icon,
     required this.tooltip,
+    this.label,
     required this.color,
     required this.hoverColor,
     required this.menuChildrenGetter,
@@ -2913,9 +2951,39 @@ class _IconSubmenuButtonState extends State<_IconSubmenuButton> {
           width: _ToolbarTheme.buttonSize,
           height: _ToolbarTheme.buttonSize,
         );
+    final iconCircle = Material(
+        type: MaterialType.transparency,
+        child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(_ToolbarTheme.iconRadius),
+              color: hover ? widget.hoverColor : widget.color,
+            ),
+            child: SizedBox(
+                width: _ToolbarTheme.buttonSize,
+                height: _ToolbarTheme.buttonSize,
+                child: icon)));
+    final content = widget.label == null
+        ? iconCircle
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              iconCircle,
+              const SizedBox(height: 3),
+              Text(
+                translate(widget.label!),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  height: 1.1,
+                ),
+              ),
+            ],
+          );
     final button = SizedBox(
-        width: widget.width ?? _ToolbarTheme.buttonSize,
-        height: _ToolbarTheme.buttonSize,
+        width: widget.width ??
+            (widget.label != null ? 64.0 : _ToolbarTheme.buttonSize),
         child: SubmenuButton(
             menuStyle:
                 widget.menuStyle ?? _ToolbarTheme.defaultMenuStyle(context),
@@ -2925,15 +2993,7 @@ class _IconSubmenuButtonState extends State<_IconSubmenuButton> {
                 }),
             child: Tooltip(
                 message: translate(widget.tooltip),
-                child: Material(
-                    type: MaterialType.transparency,
-                    child: Ink(
-                        decoration: BoxDecoration(
-                          borderRadius:
-                              BorderRadius.circular(_ToolbarTheme.iconRadius),
-                          color: hover ? widget.hoverColor : widget.color,
-                        ),
-                        child: icon))),
+                child: content),
             menuChildren: widget
                 .menuChildrenGetter(this)
                 .map((e) => _buildPointerTrackWidget(e, widget.ffi))

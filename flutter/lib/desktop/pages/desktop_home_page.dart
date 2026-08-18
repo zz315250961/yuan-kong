@@ -53,8 +53,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
+  Future<String>? _permanentPasswordFuture;
 
   final GlobalKey _childKey = GlobalKey();
+
+  Future<String> _getPermanentPasswordSet() {
+    return _permanentPasswordFuture ??=
+        bind.mainGetCommon(key: "permanent-password-set");
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -293,98 +299,141 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   buildPasswordBoard2(BuildContext context, ServerModel model) {
     RxBool refreshHover = false.obs;
     RxBool editHover = false.obs;
+    RxBool copyHover = false.obs;
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     final showOneTime = model.approveMode != 'click' &&
         model.verificationMethod != kUsePermanentPassword;
-    return Container(
-      margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          Container(
-            width: 2,
-            height: 52,
-            decoration: BoxDecoration(color: MyTheme.accent),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 7),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AutoSizeText(
-                    translate("One-time Password"),
-                    style: TextStyle(
-                        fontSize: 14, color: textColor?.withOpacity(0.5)),
-                    maxLines: 1,
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onDoubleTap: () {
-                            if (showOneTime) {
-                              Clipboard.setData(
-                                  ClipboardData(text: model.serverPasswd.text));
-                              showToast(translate("Copied"));
-                            }
-                          },
-                          child: TextFormField(
-                            controller: model.serverPasswd,
-                            readOnly: true,
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              contentPadding:
-                                  EdgeInsets.only(top: 14, bottom: 10),
-                            ),
-                            style: TextStyle(fontSize: 15),
-                          ).workaroundFreezeLinuxMint(),
-                        ),
-                      ),
-                      if (showOneTime)
-                        AnimatedRotationWidget(
-                          onPressed: () => bind.mainUpdateTemporaryPassword(),
-                          child: Tooltip(
-                            message: translate('Refresh Password'),
-                            child: Obx(() => RotatedBox(
-                                quarterTurns: 2,
-                                child: Icon(
-                                  Icons.refresh,
-                                  color: refreshHover.value
-                                      ? textColor
-                                      : Color(0xFFDDDDDD),
-                                  size: 22,
-                                ))),
-                          ),
-                          onHover: (value) => refreshHover.value = value,
-                        ).marginOnly(right: 8, top: 4),
-                      if (!bind.isDisableSettings())
-                        InkWell(
-                          child: Tooltip(
-                            message: translate('Change Password'),
-                            child: Obx(
-                              () => Icon(
-                                Icons.edit,
-                                color: editHover.value
-                                    ? textColor
-                                    : Color(0xFFDDDDDD),
-                                size: 22,
-                              ).marginOnly(right: 8, top: 4),
-                            ),
-                          ),
-                          onTap: () => DesktopSettingPage.switch2page(
-                              SettingsTabKey.safety),
-                          onHover: (value) => editHover.value = value,
-                        ),
-                    ],
+    return FutureBuilder<String>(
+      future: _getPermanentPasswordSet(),
+      builder: (context, snapshot) {
+        final permanentSet = snapshot.data == "true";
+        return Container(
+          margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _passwordRow(
+                context,
+                label: translate("One-time Password"),
+                value: showOneTime ? model.serverPasswd.text : '-',
+                trailing: [
+                  if (showOneTime)
+                    _hoverIcon(
+                      context,
+                      hover: refreshHover,
+                      tooltip: translate('Refresh Password'),
+                      icon: Icons.refresh,
+                      onTap: () => bind.mainUpdateTemporaryPassword(),
+                    ),
+                  if (showOneTime)
+                    _hoverIcon(
+                      context,
+                      hover: copyHover,
+                      tooltip: translate('Copy to clipboard'),
+                      icon: Icons.copy_outlined,
+                      onTap: () {
+                        Clipboard.setData(
+                            ClipboardData(text: model.serverPasswd.text));
+                        showToast(translate("Copied"));
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _passwordRow(
+                context,
+                label: translate("Permanent password"),
+                value: permanentSet ? translate("Set") : translate("Not set"),
+                trailing: [
+                  if (!bind.isDisableSettings())
+                    _hoverIcon(
+                      context,
+                      hover: editHover,
+                      tooltip: translate('Set permanent password'),
+                      icon: Icons.edit,
+                      onTap: () => DesktopSettingPage.switch2page(
+                          SettingsTabKey.safety),
+                    ),
+                  _hoverIcon(
+                    context,
+                    hover: copyHover,
+                    tooltip: translate('Permanent password cannot be copied'),
+                    icon: Icons.copy_outlined,
+                    enabled: false,
+                    onTap: () {
+                      showToast(
+                          translate('Permanent password cannot be copied'));
+                    },
                   ),
                 ],
               ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _passwordRow(BuildContext context,
+      {required String label,
+      required String value,
+      required List<Widget> trailing}) {
+    final textColor = Theme.of(context).textTheme.titleLarge?.color;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 2,
+          height: 36,
+          decoration: BoxDecoration(color: MyTheme.accent),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(left: 7),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AutoSizeText(
+                  label,
+                  style: TextStyle(
+                      fontSize: 12, color: textColor?.withOpacity(0.5)),
+                  maxLines: 1,
+                ),
+                Text(
+                  value,
+                  style: const TextStyle(fontSize: 15),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
-        ],
+        ),
+        ...trailing,
+      ],
+    );
+  }
+
+  Widget _hoverIcon(BuildContext context,
+      {required RxBool hover,
+      required String tooltip,
+      required IconData icon,
+      VoidCallback? onTap,
+      bool enabled = true}) {
+    final textColor = Theme.of(context).textTheme.titleLarge?.color;
+    return InkWell(
+      child: Tooltip(
+        message: tooltip,
+        child: Obx(() => Icon(
+              icon,
+              color: enabled
+                  ? (hover.value ? textColor : Color(0xFFDDDDDD))
+                  : Colors.grey,
+              size: 20,
+            ).marginOnly(right: 8, top: 4)),
       ),
+      onTap: enabled ? onTap : () {},
+      onHover: enabled ? (value) => hover.value = value : null,
     );
   }
 

@@ -51,7 +51,7 @@ class ChatPage extends StatelessWidget implements PageShape {
                               : Icons.call_received_rounded,
                           color: MyTheme.accent)
                       .marginOnly(right: 6),
-                  Text("${user.firstName}   ${user.id}"),
+                  Text(getChatDisplayName(key.peerId, user.firstName ?? '')),
                   if (connected)
                     Container(
                       width: 10,

@@ -28,11 +28,12 @@ delay:
 */
 
 // Constants
-pub const FPS: u32 = 30;
+// 远控定制：默认目标帧率 60fps（局域网/低延迟链路可达 60，延迟高时按 QoS 自动降帧保流畅）
+pub const FPS: u32 = 60;
 // 远控定制：帧率下限从 1 提高到 10，避免高延迟中继路径上画面变成幻灯片
 pub const MIN_FPS: u32 = 10;
 pub const MAX_FPS: u32 = 120;
-pub const INIT_FPS: u32 = 15;
+pub const INIT_FPS: u32 = 30;
 
 // Bitrate ratio constants for different quality levels
 const BR_MAX: f32 = 40.0; // 2000 * 2 / 100

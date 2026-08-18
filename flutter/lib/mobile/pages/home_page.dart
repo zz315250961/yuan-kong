@@ -133,7 +133,8 @@ class HomePageState extends State<HomePage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    "${currentUser.firstName}   ${currentUser.id}",
+                    getChatDisplayName(
+                        currentKey.peerId, currentUser.firstName ?? ''),
                   ),
                   if (connected)
                     Container(
