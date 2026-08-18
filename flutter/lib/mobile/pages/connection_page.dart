@@ -432,6 +432,15 @@ class _MyDevicesDialogContentState extends State<_MyDevicesDialogContent> {
   }
 
   Future<void> _load() async {
+    if (!gFFI.userModel.isLogin) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = null;
+        });
+      }
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
