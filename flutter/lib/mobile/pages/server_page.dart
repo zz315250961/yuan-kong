@@ -603,8 +603,7 @@ class _PermanentPasswordRowState extends State<_PermanentPasswordRow> {
     return Column(
       children: [
         Row(children: [
-          const Icon(Icons.lock_person_outline,
-                  color: Colors.grey, size: iconSize)
+          Icon(Icons.lock_outline, color: Colors.grey, size: iconSize)
               .marginOnly(right: iconMarginRight),
           Text(
             translate('Permanent password'),

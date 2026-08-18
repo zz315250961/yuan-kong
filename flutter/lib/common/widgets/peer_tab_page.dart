@@ -175,7 +175,7 @@ class _PeerTabPageState extends State<PeerTabPage>
                             Icon(model.tabIcon(t), color: color, size: 16),
                             const SizedBox(width: 4),
                             Text(
-                              translate(model.tabNames[t]),
+                              translate(PeerTabModel.tabNames[t]),
                               style: TextStyle(
                                   color: color,
                                   fontSize: 12,

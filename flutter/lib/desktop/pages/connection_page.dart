@@ -285,7 +285,7 @@ class _ConnectionPageState extends State<ConnectionPage>
   Future<void> onConnect(
       {bool isFileTransfer = false,
       bool isViewCamera = false,
-      bool isTerminal = false}) {
+      bool isTerminal = false}) async {
     var id = _idController.id.replaceAll(' ', '');
     if (id.isNotEmpty) {
       final myId = (await bind.mainGetMyId()).replaceAll(' ', '');
