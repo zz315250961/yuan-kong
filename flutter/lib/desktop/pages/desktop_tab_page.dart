@@ -62,6 +62,8 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
           key: const ValueKey(kTabLabelSettingPage),
           initialTabkey: SettingsTabKey.general,
         )));
+    // 默认显示主页，而不是刚添加的设置页
+    tabController.jumpTo(0, callOnSelected: false);
     if (bind.isIncomingOnly()) {
       tabController.onSelected = (key) {
         if (key == kTabLabelHomePage) {

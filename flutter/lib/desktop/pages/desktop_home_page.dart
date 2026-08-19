@@ -53,14 +53,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
-  Future<String>? _permanentPasswordFuture;
 
   final GlobalKey _childKey = GlobalKey();
-
-  Future<String> _getPermanentPasswordSet() {
-    return _permanentPasswordFuture ??=
-        bind.mainGetCommon(key: "permanent-password-set");
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -303,15 +297,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     final showOneTime = model.approveMode != 'click' &&
         model.verificationMethod != kUsePermanentPassword;
-    return FutureBuilder<String>(
-      future: _getPermanentPasswordSet(),
-      builder: (context, snapshot) {
-        final permanentSet = snapshot.data == "true";
-        return Container(
-          margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+    final permanentSet =
+        bind.mainGetCommonSync(key: "permanent-password-set") == "true";
+    return Container(
+      margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
               _passwordRow(
                 context,
                 label: translate("One-time Password"),
@@ -367,10 +359,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   ),
                 ],
               ),
-            ],
-          ),
-        );
-      },
+        ],
+      ),
     );
   }
 

@@ -590,32 +590,61 @@ class _MyDevicesDialogContentState extends State<_MyDevicesDialogContent> {
               final os = (info['os'] ?? '').toString();
               final id = (d['id'] ?? '').toString();
               final self = _isSelf(id);
-              return ListTile(
-                leading: _deviceIcon(os),
-                title: Text(name.isEmpty ? id : name),
-                subtitle: Text(self ? '${id}（${translate('This device')}）' : id),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.settings_remote, size: 18),
-                      tooltip: translate('Connect'),
-                      onPressed: self ? null : () => _connectDevice(id),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.copy, size: 18),
-                      tooltip: translate('Copy to clipboard'),
-                      onPressed: () async {
-                        await Clipboard.setData(ClipboardData(text: id));
-                        showToast(translate('Copied'));
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                      tooltip: translate('Remove'),
-                      onPressed: () => _deleteDevice(d),
-                    ),
-                  ],
+              return Card(
+                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    children: [
+                      _deviceIcon(os),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name.isEmpty ? id : name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              self ? '${id}（${translate('This device')}）' : id,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).hintColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.settings_remote, size: 18),
+                        tooltip: translate('Connect'),
+                        onPressed: self ? null : () => _connectDevice(id),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.copy, size: 18),
+                        tooltip: translate('Copy to clipboard'),
+                        onPressed: () async {
+                          await Clipboard.setData(ClipboardData(text: id));
+                          showToast(translate('Copied'));
+                        },
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        tooltip: translate('Remove'),
+                        onPressed: () => _deleteDevice(d),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },

@@ -18,6 +18,7 @@ import '../../common.dart';
 import '../../common/formatter/id_formatter.dart';
 import '../../common/widgets/peer_tab_page.dart';
 import '../../common/widgets/autocomplete.dart';
+import '../../common/widgets/my_devices.dart';
 import '../../models/platform_model.dart';
 import '../../desktop/widgets/material_mod_popup_menu.dart' as mod_menu;
 
@@ -312,7 +313,18 @@ class _ConnectionPageState extends State<ConnectionPage>
       child: Ink(
         child: Column(
           children: [
-            getConnectionPageTitle(context, false).marginOnly(bottom: 15),
+            Row(
+              children: [
+                Expanded(
+                    child: getConnectionPageTitle(context, false)
+                        .marginOnly(bottom: 15)),
+                IconButton(
+                  icon: const Icon(Icons.devices, size: 20),
+                  tooltip: translate('My devices'),
+                  onPressed: () => showMyDevicesDialog(),
+                ).marginOnly(bottom: 15),
+              ],
+            ),
             Row(
               children: [
                 Expanded(
