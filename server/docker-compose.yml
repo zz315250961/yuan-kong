@@ -1,0 +1,35 @@
+# RemoteDesk 自建服务器（基于 RustDesk Server OSS）
+#
+# 使用方法：在 Linux 服务器上执行  sudo docker compose up -d
+#
+# 端口说明（云服务器安全组 / 防火墙需放行）：
+#   21115/TCP       NAT 类型测试
+#   21116/TCP+UDP   ID 注册、心跳、UDP 打洞与 TCP 连接（必须同时开 TCP 和 UDP）
+#   21117/TCP       中继服务（hbbr，P2P 打洞失败时兜底）
+#   21118/21119     仅 Web 客户端需要，默认不开放（避免伪造 IP 风险）
+#
+# 首次启动后服务器公钥生成在 ./data/id_ed25519.pub，
+# 客户端构建时用它作为 RS_PUB_KEY。
+services:
+  hbbs:
+    container_name: hbbs
+    image: rustdesk/rustdesk-server:latest
+    command: hbbs
+    volumes:
+      - ./data:/root
+    network_mode: "host"
+    depends_on:
+      - hbbr
+    restart: unless-stopped
+    # 如需要强制所有会话走中继（不打洞），取消下面注释：
+    # environment:
+    #   - ALWAYS_USE_RELAY=Y
+
+  hbbr:
+    container_name: hbbr
+    image: rustdesk/rustdesk-server:latest
+    command: hbbr
+    volumes:
+      - ./data:/root
+    network_mode: "host"
+    restart: unless-stopped

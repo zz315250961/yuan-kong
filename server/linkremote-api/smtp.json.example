@@ -1,0 +1,14 @@
+{
+  "host": "smtp.qq.com",
+  "port": 465,
+  "use_ssl": true,
+  "user": "你的QQ邮箱@qq.com",
+  "password": "SMTP授权码（QQ邮箱-设置-账户-开启SMTP后生成，不是QQ密码）",
+  "from_email": "你的QQ邮箱@qq.com"
+}
+
+说明：
+1. 复制本文件为 /opt/linkremote-api/smtp.json 并填入真实信息；
+2. 修改后执行 pm2 restart linkremote-api；
+3. 465 端口用隐式 SSL（use_ssl: true）；如用 587 则 use_ssl: false（STARTTLS）；
+4. 未配置 smtp.json 时验证码打印到 PM2 日志（联调用）。

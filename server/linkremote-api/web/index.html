@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="LinkRemote 账号与设备管理">
+  <title>LinkRemote 管理中心</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="brand-bar">
+      <a class="brand" href="/" aria-label="LinkRemote 管理中心">
+        <span class="brand-mark" aria-hidden="true">LR</span>
+        <span><strong>LinkRemote</strong><small>账号与设备管理</small></span>
+      </a>
+      <span class="scope-note">此网页不提供远程控制</span>
+    </header>
+
+    <section id="login-view" class="auth-view" data-view="login">
+      <div class="auth-copy">
+        <p class="eyebrow">PERSONAL CONSOLE</p>
+        <h1 tabindex="-1">管理你的远控设备</h1>
+        <p>登录后可查看设备 ID、最近登录时间，以及从账号列表移除旧设备。</p>
+      </div>
+      <form id="login-form" class="panel form-stack">
+        <h2>登录账号</h2>
+        <label>邮箱<input name="username" type="email" autocomplete="username" required></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">登录</button>
+        <div class="form-links">
+          <button type="button" data-show-view="register">注册账号</button>
+          <button type="button" data-show-view="reset">忘记密码</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="register-view" class="auth-view" data-view="register" hidden>
+      <div class="auth-copy">
+        <p class="eyebrow">CREATE ACCOUNT</p>
+        <h1 tabindex="-1">创建个人账号</h1>
+        <p>验证码只用于确认邮箱。注册成功后会通过安全 Cookie 保持登录。</p>
+      </div>
+      <form id="register-form" class="panel form-stack">
+        <h2>注册</h2>
+        <label>邮箱<input name="username" type="email" autocomplete="email" required></label>
+        <div class="code-row">
+          <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+          <button type="button" data-send-code="register">发送验证码</button>
+        </div>
+        <label>设置密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
+        <button class="primary" type="submit">注册并登录</button>
+        <button type="button" data-show-view="login">返回登录</button>
+      </form>
+    </section>
+
+    <section id="reset-view" class="auth-view" data-view="reset" hidden>
+      <div class="auth-copy">
+        <p class="eyebrow">ACCOUNT RECOVERY</p>
+        <h1 tabindex="-1">重置密码</h1>
+        <p>重置完成后，所有已登录设备都需要重新登录。</p>
+      </div>
+      <form id="reset-form" class="panel form-stack">
+        <h2>找回账号</h2>
+        <label>邮箱<input name="email" type="email" autocomplete="email" required></label>
+        <div class="code-row">
+          <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+          <button type="button" data-send-code="reset">发送验证码</button>
+        </div>
+        <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
+        <button class="primary" type="submit">重置密码</button>
+        <button type="button" data-show-view="login">返回登录</button>
+      </form>
+    </section>
+
+    <section id="dashboard-view" data-view="dashboard" hidden>
+      <div class="dashboard-heading">
+        <div><p class="eyebrow">DEVICE DIRECTORY</p><h1 tabindex="-1">设备与账号</h1></div>
+        <div class="heading-actions">
+          <button type="button" id="refresh-devices">刷新设备</button>
+          <button type="button" id="logout-button">退出登录</button>
+        </div>
+      </div>
+      <div class="dashboard-grid">
+        <aside class="panel account-panel">
+          <p class="label">当前账号</p>
+          <p id="account-email" class="account-email">—</p>
+          <form id="change-email-form" class="form-stack compact">
+            <h2>更换绑定邮箱</h2>
+            <label>新邮箱<input name="new_email" type="email" autocomplete="email" required></label>
+            <div class="code-row">
+              <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+              <button type="button" data-send-code="change_email">发送验证码</button>
+            </div>
+            <label>当前密码<input name="password" type="password" autocomplete="current-password" required></label>
+            <button class="primary" type="submit">确认更换</button>
+          </form>
+        </aside>
+        <section class="devices-panel" aria-labelledby="devices-title">
+          <div class="section-title"><div><p class="label">MY DEVICES</p><h2 id="devices-title">账号设备</h2></div><span id="device-count">0 台</span></div>
+          <div id="device-list" class="device-list" aria-busy="false"></div>
+        </section>
+      </div>
+    </section>
+
+    <div id="live-status" class="live-status" aria-live="polite"></div>
+  </main>
+</body>
+</html>
