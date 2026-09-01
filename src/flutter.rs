@@ -729,6 +729,13 @@ impl InvokeUiSession for FlutterHandler {
                     &status.target_bitrate.map_or(NULL, |it| it.to_string()),
                 ),
                 (
+                    "target_fps",
+                    &status.target_fps.map_or(NULL, |it| it.to_string()),
+                ),
+                ("qos_tier", &status.qos_tier.map_or(NULL, |it| it)),
+                ("capture_scale", &status.capture_scale.map_or(NULL, |it| it)),
+                ("transport", &status.transport.map_or(NULL, |it| it)),
+                (
                     "codec_format",
                     &status.codec_format.map_or(NULL, |it| it.to_string()),
                 ),

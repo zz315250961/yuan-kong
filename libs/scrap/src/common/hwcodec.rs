@@ -46,6 +46,7 @@ pub struct HwRamEncoderConfig {
     pub width: usize,
     pub height: usize,
     pub quality: f32,
+    pub fps: u32,
     pub keyframe_interval: Option<usize>,
 }
 
@@ -77,7 +78,7 @@ impl EncoderApi for HwRamEncoder {
                     pixfmt: DEFAULT_PIXFMT,
                     align: HW_STRIDE_ALIGN as _,
                     kbs: bitrate as i32,
-                    fps: DEFAULT_FPS,
+                    fps: config.fps.clamp(1, 120) as i32,
                     gop,
                     quality: DEFAULT_HW_QUALITY,
                     rc,

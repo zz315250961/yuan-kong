@@ -1,3 +1,7 @@
+use super::video_policy::{
+    classify_delay, next_fps, ratio_multiplier, NetworkTier, DEFAULT_FPS as FPS,
+    INITIAL_FPS as INIT_FPS, MAX_FPS, MIN_FPS, RECOVERY_SAMPLES,
+};
 use super::*;
 use scrap::codec::{Quality, BR_BALANCED, BR_BEST, BR_SPEED};
 use std::{
@@ -6,34 +10,13 @@ use std::{
 };
 
 /*
-FPS adjust:
-a. new user connected =>set to INIT_FPS
-b. TestDelay receive => update user's fps according to network delay
-    When network delay < DELAY_THRESHOLD_150MS, set minimum fps according to image quality, and increase fps;
-    When network delay >= DELAY_THRESHOLD_150MS, set minimum fps according to image quality, and decrease fps;
-c. second timeout / TestDelay receive => update real fps to the minimum fps from all users
-
-ratio adjust:
-a. user set image quality => update to the maximum ratio of the latest quality
-b. 3 seconds timeout => update ratio according to network delay
-    When network delay < DELAY_THRESHOLD_150MS, increase ratio, max 150kbps;
-    When network delay >= DELAY_THRESHOLD_150MS, decrease ratio;
-
-adjust between FPS and ratio:
-    When network delay < DELAY_THRESHOLD_150MS, fps is always higher than the minimum fps, and ratio is increasing;
-    When network delay >= DELAY_THRESHOLD_150MS, fps is always lower than the minimum fps, and ratio is decreasing;
+FPS and ratio adjustment use the shared four-tier network policy. Good samples recover
+slowly after a hysteresis window; congested samples reduce FPS and bitrate immediately.
+The effective FPS always remains within the user's 10-60 FPS cap.
 
 delay:
     use delay minus RTT as the actual network delay
 */
-
-// Constants
-// 远控定制：默认目标帧率 60fps（局域网/低延迟链路可达 60，延迟高时按 QoS 自动降帧保流畅）
-pub const FPS: u32 = 60;
-// 远控定制：帧率下限从 1 提高到 10，避免高延迟中继路径上画面变成幻灯片
-pub const MIN_FPS: u32 = 10;
-pub const MAX_FPS: u32 = 120;
-pub const INIT_FPS: u32 = 30;
 
 // Bitrate ratio constants for different quality levels
 const BR_MAX: f32 = 40.0; // 2000 * 2 / 100
@@ -44,9 +27,7 @@ const MAX_BR_MULTIPLE: f32 = 1.0;
 const HISTORY_DELAY_LEN: usize = 2;
 const ADJUST_RATIO_INTERVAL: usize = 3; // Adjust quality ratio every 3 seconds
 const DYNAMIC_SCREEN_THRESHOLD: usize = 2; // Allow increase quality ratio if encode more than 2 times in one second
-// 远控定制：延迟阈值放宽到 600ms（5G/中继路径常见 200~600ms，
-// 原阈值会导致帧率被压到下限；保帧率、降画质更符合远控体验）
-const DELAY_THRESHOLD_150MS: u32 = 600;
+const DEFAULT_DELAY_MS: u32 = 100;
 
 #[derive(Default, Debug, Clone)]
 struct UserDelay {
@@ -54,14 +35,13 @@ struct UserDelay {
     delay_history: VecDeque<u32>,
     fps: Option<u32>,
     rtt_calculator: RttCalculator,
-    quick_increase_fps_count: usize,
     increase_fps_count: usize,
 }
 
 impl UserDelay {
     fn add_delay(&mut self, delay: u32) {
         self.rtt_calculator.update(delay);
-        if self.delay_history.len() > HISTORY_DELAY_LEN {
+        if self.delay_history.len() >= HISTORY_DELAY_LEN {
             self.delay_history.pop_front();
         }
         self.delay_history.push_back(delay);
@@ -84,7 +64,7 @@ impl UserDelay {
                 avg_delay
             }
         } else {
-            DELAY_THRESHOLD_150MS
+            DEFAULT_DELAY_MS
         }
     }
 }
@@ -94,7 +74,7 @@ impl UserDelay {
 struct UserData {
     auto_adjust_fps: Option<u32>, // reserve for compatibility
     custom_fps: Option<u32>,
-    quality: Option<(i64, Quality)>, // (time, quality)
+    quality: Option<(u64, Quality)>, // (monotonic sequence, quality)
     delay: UserDelay,
     record: bool,
 }
@@ -115,6 +95,14 @@ pub struct VideoQoS {
     adjust_ratio_instant: Instant,
     abr_config: bool,
     new_user_instant: Instant,
+    quality_sequence: u64,
+}
+
+pub struct VideoQosSnapshot {
+    pub target_bitrate: u32,
+    pub target_fps: u32,
+    pub qos_tier: &'static str,
+    pub capture_scale: &'static str,
 }
 
 impl Default for VideoQoS {
@@ -128,6 +116,7 @@ impl Default for VideoQoS {
             adjust_ratio_instant: Instant::now(),
             abr_config: true,
             new_user_instant: Instant::now(),
+            quality_sequence: 0,
         }
     }
 }
@@ -149,6 +138,11 @@ impl VideoQoS {
         }
     }
 
+    // Configure the encoder for the user's ceiling while pacing starts conservatively.
+    pub fn encoder_fps(&self) -> u32 {
+        self.highest_fps()
+    }
+
     // Store bitrate for later use
     pub fn store_bitrate(&mut self, bitrate: u32) {
         self.bitrate_store = bitrate;
@@ -165,6 +159,10 @@ impl VideoQoS {
             self.ratio = BR_BALANCED;
         }
         self.ratio
+    }
+
+    pub fn encoder_ratio(&mut self) -> f32 {
+        self.ratio() * scrap::codec::fps_bitrate_scale(self.fps())
     }
 
     // Check if any user is in recording mode
@@ -189,16 +187,19 @@ impl VideoQoS {
     // Initialize new user session
     pub fn on_connection_open(&mut self, id: i32) {
         self.users.insert(id, UserData::default());
+        self.fps = self.fps.min(INIT_FPS);
         self.abr_config = Config::get_option("enable-abr") != "N";
         self.new_user_instant = Instant::now();
     }
 
     // Clean up user session
-    pub fn on_connection_close(&mut self, id: i32) {
+    pub fn on_connection_close(&mut self, id: i32) -> bool {
+        let before = self.capture_half_scale();
         self.users.remove(&id);
         if self.users.is_empty() {
             *self = Default::default();
         }
+        before != self.capture_half_scale()
     }
 
     pub fn user_custom_fps(&mut self, id: i32, fps: u32) {
@@ -219,7 +220,8 @@ impl VideoQoS {
         }
     }
 
-    pub fn user_image_quality(&mut self, id: i32, image_quality: i32) {
+    pub fn user_image_quality(&mut self, id: i32, image_quality: i32) -> bool {
+        let before = self.capture_half_scale();
         let convert_quality = |q: i32| -> Quality {
             if q == ImageQuality::Balanced.value() {
                 Quality::Balanced
@@ -233,12 +235,14 @@ impl VideoQoS {
             }
         };
 
-        let quality = Some((hbb_common::get_time(), convert_quality(image_quality)));
+        self.quality_sequence = self.quality_sequence.saturating_add(1);
+        let quality = Some((self.quality_sequence, convert_quality(image_quality)));
         if let Some(user) = self.users.get_mut(&id) {
             user.quality = quality;
             // update ratio directly
             self.ratio = self.latest_quality().ratio();
         }
+        before != self.capture_half_scale()
     }
 
     pub fn user_record(&mut self, id: i32, v: bool) {
@@ -249,89 +253,22 @@ impl VideoQoS {
 
     pub fn user_network_delay(&mut self, id: i32, delay: u32) {
         let highest_fps = self.highest_fps();
-        let target_ratio = self.latest_quality().ratio();
-
-        // For bad network, small fps means quick reaction and high quality
-        let (min_fps, normal_fps) = if target_ratio >= BR_BEST {
-            (8, 16)
-        } else if target_ratio >= BR_BALANCED {
-            (10, 20)
-        } else {
-            (12, 24)
-        };
-
-        // Calculate minimum acceptable delay-fps product
-        let dividend_ms = DELAY_THRESHOLD_150MS * min_fps;
 
         let mut adjust_ratio = false;
         if let Some(user) = self.users.get_mut(&id) {
             let delay = delay.max(10);
-            let old_avg_delay = user.delay.avg_delay();
             user.delay.add_delay(delay);
-            let mut avg_delay = user.delay.avg_delay();
-            avg_delay = avg_delay.max(10);
-            let mut fps = self.fps;
-
-            // Adaptive FPS adjustment based on network delay:
-            if avg_delay < 50 {
-                user.delay.quick_increase_fps_count += 1;
-                let mut step = if fps < normal_fps { 1 } else { 0 };
-                if user.delay.quick_increase_fps_count >= 3 {
-                    // After 3 consecutive good samples, increase more aggressively
-                    user.delay.quick_increase_fps_count = 0;
-                    step = 5;
-                }
-                fps = min_fps.max(fps + step);
-            } else if avg_delay < 100 {
-                let step = if avg_delay < old_avg_delay {
-                    if fps < normal_fps {
-                        1
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                };
-                fps = min_fps.max(fps + step);
-            } else if avg_delay < DELAY_THRESHOLD_150MS {
-                fps = min_fps.max(fps);
-            } else {
-                let devide_fps = ((fps as f32) / (avg_delay as f32 / DELAY_THRESHOLD_150MS as f32))
-                    .ceil() as u32;
-                if avg_delay < 200 {
-                    fps = min_fps.max(devide_fps);
-                } else if avg_delay < 300 {
-                    fps = min_fps.min(devide_fps);
-                } else if avg_delay < 600 {
-                    fps = dividend_ms / avg_delay;
-                } else {
-                    fps = (dividend_ms / avg_delay).min(devide_fps);
-                }
-            }
-
-            if avg_delay < DELAY_THRESHOLD_150MS {
+            let tier = classify_delay(user.delay.avg_delay().max(10));
+            if tier == NetworkTier::Good {
                 user.delay.increase_fps_count += 1;
             } else {
                 user.delay.increase_fps_count = 0;
             }
-            if user.delay.increase_fps_count >= 3 {
-                // After 3 stable samples, try increasing FPS
+            let recovery_ready = user.delay.increase_fps_count >= RECOVERY_SAMPLES;
+            if recovery_ready {
                 user.delay.increase_fps_count = 0;
-                fps += 1;
             }
-
-            // Reset quick increase counter if network condition worsens
-            if avg_delay > 50 {
-                user.delay.quick_increase_fps_count = 0;
-            }
-
-            // 远控定制：安卓目标 60fps（延迟只影响画质/码率，对标 ToDesk）
-            let upper_fps = if cfg!(target_os = "android") {
-                60.min(MAX_FPS)
-            } else {
-                highest_fps
-            };
-            fps = fps.clamp(MIN_FPS, upper_fps);
+            let fps = next_fps(self.fps, highest_fps, tier, recovery_ready);
             // first network delay message
             adjust_ratio = user.delay.fps.is_none();
             user.delay.fps = Some(fps);
@@ -387,6 +324,36 @@ impl VideoQoS {
         }
     }
 
+    pub(crate) fn network_tier(&self) -> NetworkTier {
+        self.users
+            .values()
+            .map(|user| classify_delay(user.delay.avg_delay()))
+            .max_by_key(|tier| match tier {
+                NetworkTier::Good => 0,
+                NetworkTier::Stable => 1,
+                NetworkTier::Congested => 2,
+                NetworkTier::Severe => 3,
+            })
+            .unwrap_or(NetworkTier::Stable)
+    }
+
+    pub fn capture_half_scale(&self) -> bool {
+        super::video_policy::capture_half_scale(self.latest_quality())
+    }
+
+    pub fn snapshot(&self) -> VideoQosSnapshot {
+        VideoQosSnapshot {
+            target_bitrate: self.bitrate(),
+            target_fps: self.fps(),
+            qos_tier: self.network_tier().as_str(),
+            capture_scale: if self.capture_half_scale() {
+                "half"
+            } else {
+                "full"
+            },
+        }
+    }
+
     #[inline]
     fn highest_fps(&self) -> u32 {
         let user_fps = |u: &UserData| {
@@ -413,11 +380,9 @@ impl VideoQoS {
     // Get latest quality settings from all users
     pub fn latest_quality(&self) -> Quality {
         self.users
-            .iter()
-            .map(|(_, u)| u.quality)
-            .filter(|q| *q != None)
-            .max_by(|a, b| a.unwrap_or_default().0.cmp(&b.unwrap_or_default().0))
-            .flatten()
+            .values()
+            .filter_map(|user| user.quality)
+            .max_by_key(|(sequence, _)| *sequence)
             .unwrap_or((0, Quality::Balanced))
             .1
     }
@@ -434,7 +399,7 @@ impl VideoQoS {
         };
 
         let target_quality = self.latest_quality();
-        let target_ratio = self.latest_quality().ratio();
+        let target_ratio = target_quality.ratio();
         let current_ratio = self.ratio;
         let current_bitrate = self.bitrate();
 
@@ -478,30 +443,8 @@ impl VideoQoS {
         };
         let max = target_ratio * MAX_BR_MULTIPLE;
 
-        let mut v = current_ratio;
-
-        // Adjust ratio based on network delay thresholds
-        if max_delay < 50 {
-            if dynamic_screen {
-                v = current_ratio * 1.15;
-            }
-        } else if max_delay < 100 {
-            if dynamic_screen {
-                v = current_ratio * 1.1;
-            }
-        } else if max_delay < DELAY_THRESHOLD_150MS {
-            if dynamic_screen {
-                v = current_ratio * 1.05;
-            }
-        } else if max_delay < 200 {
-            v = current_ratio * 0.95;
-        } else if max_delay < 300 {
-            v = current_ratio * 0.9;
-        } else if max_delay < 500 {
-            v = current_ratio * 0.85;
-        } else {
-            v = current_ratio * 0.8;
-        }
+        let tier = classify_delay(max_delay);
+        let mut v = current_ratio * ratio_multiplier(tier, dynamic_screen);
 
         // Limit quality increase rate for better stability
         if let Some(ratio_add_150kbps) = ratio_add_150kbps {
@@ -601,5 +544,91 @@ impl RttCalculator {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connected_qos() -> VideoQoS {
+        let mut qos = VideoQoS::default();
+        qos.on_connection_open(7);
+        qos.new_user_instant = Instant::now() - Duration::from_secs(2);
+        qos
+    }
+
+    #[test]
+    fn custom_fps_rejects_values_outside_product_range() {
+        let mut qos = connected_qos();
+        qos.user_custom_fps(7, 9);
+        assert_eq!(qos.highest_fps(), 60);
+        qos.user_custom_fps(7, 45);
+        assert_eq!(qos.highest_fps(), 45);
+        qos.user_custom_fps(7, 61);
+        assert_eq!(qos.highest_fps(), 45);
+    }
+
+    #[test]
+    fn a_new_connection_starts_at_the_safe_initial_fps() {
+        let qos = connected_qos();
+        assert_eq!(qos.fps(), INIT_FPS);
+        assert_eq!(qos.encoder_fps(), MAX_FPS);
+    }
+
+    #[test]
+    fn adaptive_fps_never_raises_a_user_cap() {
+        let mut qos = connected_qos();
+        qos.user_custom_fps(7, 30);
+        for _ in 0..3 {
+            qos.user_network_delay(7, 20);
+        }
+        assert!(qos.fps() <= 30);
+    }
+
+    #[test]
+    fn congested_and_severe_samples_reduce_ratio() {
+        let mut qos = connected_qos();
+        qos.ratio = BR_BALANCED;
+        qos.store_bitrate(2_000);
+        if let Some(user) = qos.users.get_mut(&7) {
+            user.delay.delay_history = VecDeque::from([300, 300]);
+        }
+        qos.adjust_ratio(true);
+        assert!(qos.ratio() < BR_BALANCED);
+
+        let congested = qos.ratio();
+        if let Some(user) = qos.users.get_mut(&7) {
+            user.delay.delay_history = VecDeque::from([600, 600]);
+        }
+        qos.adjust_ratio(true);
+        assert!(qos.ratio() < congested);
+    }
+
+    #[test]
+    fn client_fps_normalization_matches_the_server_contract() {
+        assert_eq!(crate::client::normalize_custom_fps(5), 10);
+        assert_eq!(crate::client::normalize_custom_fps(45), 45);
+        assert_eq!(crate::client::normalize_custom_fps(120), 60);
+    }
+
+    #[test]
+    fn best_quality_changes_capture_to_full_resolution() {
+        let mut qos = connected_qos();
+        assert!(qos.capture_half_scale());
+        assert!(qos.user_image_quality(7, ImageQuality::Best.value()));
+        assert!(!qos.capture_half_scale());
+        assert!(!qos.user_image_quality(7, ImageQuality::Best.value()));
+    }
+
+    #[test]
+    fn removing_latest_best_user_restores_balanced_scale() {
+        let mut qos = connected_qos();
+        qos.on_connection_open(8);
+        qos.user_image_quality(7, ImageQuality::Balanced.value());
+        qos.user_image_quality(8, ImageQuality::Best.value());
+        assert!(!qos.capture_half_scale());
+        assert!(qos.on_connection_close(8));
+        assert!(qos.capture_half_scale());
     }
 }

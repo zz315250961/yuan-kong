@@ -603,6 +603,13 @@ class QualityMonitor extends StatelessWidget {
                           rightColor: Colors.green),
                       _row("Target Bitrate",
                           "${qualityMonitorModel.data.targetBitrate ?? '-'}kb"),
+                      _row("Target FPS",
+                          qualityMonitorModel.data.targetFps ?? '-'),
+                      _row("Network", qualityMonitorModel.data.qosTier ?? '-'),
+                      _row("Capture",
+                          qualityMonitorModel.data.captureScale ?? '-'),
+                      _row("Transport",
+                          qualityMonitorModel.data.transport ?? '-'),
                       _row(
                           "Codec", qualityMonitorModel.data.codecFormat ?? '-'),
                       _row("Chroma", qualityMonitorModel.data.chroma ?? '-'),

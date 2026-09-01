@@ -1906,6 +1906,9 @@ impl<T: InvokeUiSession> Interface for Session<T> {
             self.update_quality_status(QualityStatus {
                 delay: Some(t.last_delay as _),
                 target_bitrate: Some(t.target_bitrate as _),
+                target_fps: (t.target_fps > 0).then_some(t.target_fps as _),
+                qos_tier: (!t.qos_tier.is_empty()).then_some(t.qos_tier.clone()),
+                capture_scale: (!t.capture_scale.is_empty()).then_some(t.capture_scale.clone()),
                 ..Default::default()
             });
             handle_test_delay(t, peer).await;

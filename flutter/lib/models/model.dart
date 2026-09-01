@@ -3560,8 +3560,36 @@ class QualityMonitorData {
   String? fps;
   String? delay;
   String? targetBitrate;
+  String? targetFps;
+  String? qosTier;
+  String? captureScale;
+  String? transport;
   String? codecFormat;
   String? chroma;
+
+  void applyEvent(Map<String, dynamic> evt) {
+    final speedValue = evt['speed'] as String? ?? '';
+    final delayValue = evt['delay'] as String? ?? '';
+    final bitrateValue = evt['target_bitrate'] as String? ?? '';
+    final targetFpsValue = evt['target_fps'] as String? ?? '';
+    final qosTierValue = evt['qos_tier'] as String? ?? '';
+    final captureScaleValue = evt['capture_scale'] as String? ?? '';
+    final transportValue = evt['transport'] as String? ?? '';
+    final codecValue = evt['codec_format'] as String? ?? '';
+    final chromaValue = evt['chroma'] as String? ?? '';
+
+    if (speedValue.isNotEmpty) speed = speedValue;
+    if (delayValue.isNotEmpty) delay = delayValue;
+    if (bitrateValue.isNotEmpty) targetBitrate = bitrateValue;
+    if (targetFpsValue.isNotEmpty) targetFps = targetFpsValue;
+    if (qosTierValue.isNotEmpty) qosTier = qosTierValue;
+    if (captureScaleValue.isNotEmpty) {
+      captureScale = captureScaleValue == 'half' ? '1/2' : 'Full';
+    }
+    if (transportValue.isNotEmpty) transport = transportValue;
+    if (codecValue.isNotEmpty) codecFormat = codecValue;
+    if (chromaValue.isNotEmpty) chroma = chromaValue;
+  }
 }
 
 class QualityMonitorModel with ChangeNotifier {
@@ -3586,9 +3614,7 @@ class QualityMonitorModel with ChangeNotifier {
 
   updateQualityStatus(Map<String, dynamic> evt) {
     try {
-      if (evt.containsKey('speed') && (evt['speed'] as String).isNotEmpty) {
-        _data.speed = evt['speed'];
-      }
+      _data.applyEvent(evt);
       if (evt.containsKey('fps') && (evt['fps'] as String).isNotEmpty) {
         final fps = jsonDecode(evt['fps']) as Map<String, dynamic>;
         final pi = parent.target?.ffiModel.pi;
@@ -3609,20 +3635,6 @@ class QualityMonitorModel with ChangeNotifier {
         } else {
           _data.fps = null;
         }
-      }
-      if (evt.containsKey('delay') && (evt['delay'] as String).isNotEmpty) {
-        _data.delay = evt['delay'];
-      }
-      if (evt.containsKey('target_bitrate') &&
-          (evt['target_bitrate'] as String).isNotEmpty) {
-        _data.targetBitrate = evt['target_bitrate'];
-      }
-      if (evt.containsKey('codec_format') &&
-          (evt['codec_format'] as String).isNotEmpty) {
-        _data.codecFormat = evt['codec_format'];
-      }
-      if (evt.containsKey('chroma') && (evt['chroma'] as String).isNotEmpty) {
-        _data.chroma = evt['chroma'];
       }
       notifyListeners();
     } catch (e) {

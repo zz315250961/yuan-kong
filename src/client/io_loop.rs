@@ -336,6 +336,7 @@ impl<T: InvokeUiSession> Remote<T> {
                                 fps,
                                 chroma,
                                 codec_format,
+                                transport: Some(if direct { "direct" } else { "relay" }.to_owned()),
                                 ..Default::default()
                             });
                         }
@@ -1181,10 +1182,8 @@ impl<T: InvokeUiSession> Remote<T> {
         });
         let custom_fps = self.handler.lc.read().unwrap().custom_fps.clone();
         let custom_fps = custom_fps.lock().unwrap().clone();
-        let mut custom_fps = custom_fps.unwrap_or(60);
-        if custom_fps < 5 || custom_fps > 120 {
-            custom_fps = 60;
-        }
+        let custom_fps =
+            crate::client::normalize_custom_fps(custom_fps.unwrap_or(60) as i32) as usize;
         let inactive_threshold = 15;
         let max_queue_len = self
             .video_threads

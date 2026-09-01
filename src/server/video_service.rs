@@ -574,7 +574,8 @@ fn run(vs: VideoService) -> ResultType<()> {
     }
     let mut video_qos = VIDEO_QOS.lock().unwrap();
     let mut spf = video_qos.spf();
-    let mut quality = video_qos.ratio();
+    let mut quality = video_qos.encoder_ratio();
+    let target_fps = video_qos.encoder_fps();
     let record_incoming = config::option2bool(
         "allow-auto-record-incoming",
         &Config::get_option("allow-auto-record-incoming"),
@@ -585,6 +586,7 @@ fn run(vs: VideoService) -> ResultType<()> {
         &c,
         sp.name(),
         quality,
+        target_fps,
         client_record,
         record_incoming,
         last_portable_service_running,
@@ -605,6 +607,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                 &c,
                 sp.name(),
                 quality,
+                target_fps,
                 client_record,
                 record_incoming,
                 last_portable_service_running,
@@ -722,10 +725,8 @@ fn run(vs: VideoService) -> ResultType<()> {
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
 
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "mediacodec"))]
         if scrap::android::media_codec_mode() {
-            // 远控定制：Kotlin MediaCodec 直连硬编路径——直接发送已编码的 H.264 帧，
-            // 绕开 ffmpeg 封装（该路径在这台设备上只有 11~22fps）
             let frames = scrap::android::take_encoded_frames();
             if frames.is_empty() {
                 std::thread::sleep(Duration::from_millis(5));
@@ -980,6 +981,7 @@ fn setup_encoder(
     c: &CapturerInfo,
     name: String,
     quality: f32,
+    fps: u32,
     client_record: bool,
     record_incoming: bool,
     last_portable_service_running: bool,
@@ -996,6 +998,7 @@ fn setup_encoder(
         &c,
         name.to_string(),
         quality,
+        fps,
         client_record || record_incoming,
         last_portable_service_running,
         source,
@@ -1012,6 +1015,7 @@ fn get_encoder_config(
     c: &CapturerInfo,
     _name: String,
     quality: f32,
+    fps: u32,
     record: bool,
     _portable_service: bool,
     _source: VideoSource,
@@ -1035,6 +1039,7 @@ fn get_encoder_config(
                     width: c.width,
                     height: c.height,
                     quality,
+                    fps,
                     feature,
                     keyframe_interval,
                 });
@@ -1047,6 +1052,7 @@ fn get_encoder_config(
                     width: c.width,
                     height: c.height,
                     quality,
+                    fps,
                     keyframe_interval,
                 });
             }
@@ -1122,8 +1128,6 @@ fn get_recorder(
 
 #[cfg(target_os = "android")]
 fn check_change_scale(hardware: bool) -> ResultType<()> {
-    use hbb_common::config::keys::OPTION_ENABLE_ANDROID_SOFTWARE_ENCODING_HALF_SCALE as SCALE_SOFT;
-
     // isStart flag is set at the end of startCapture() in Android, wait it to be set.
     let n = 60; // 3s
     for i in 0..n {
@@ -1138,12 +1142,11 @@ fn check_change_scale(hardware: bool) -> ResultType<()> {
         }
     }
     let screen_size = scrap::screen_size();
-    let scale_soft = hbb_common::config::option2bool(SCALE_SOFT, &Config::get_option(SCALE_SOFT));
-    // 远控定制：流畅与均衡模式都强制半分辨率采集（实测全分辨率 HEVC 硬编
-    // 只有 4~14fps）；只有用户显式选择「好画质」(best) 才恢复全分辨率
-    let quality = Config::get_option(hbb_common::config::keys::OPTION_IMAGE_QUALITY);
-    let half_scale = scale_soft && quality != "best";
-    log::info!("hardware: {hardware}, scale_soft: {scale_soft}, screen_size: {screen_size:?}",);
+    let half_scale = VIDEO_QOS
+        .lock()
+        .map(|qos| qos.capture_half_scale())
+        .unwrap_or(true);
+    log::info!("hardware: {hardware}, half_scale: {half_scale}, screen_size: {screen_size:?}",);
     scrap::android::call_main_service_set_by_name(
         "half_scale",
         Some(half_scale.to_string().as_str()),
@@ -1375,8 +1378,9 @@ fn check_qos(
 ) -> ResultType<()> {
     let mut video_qos = VIDEO_QOS.lock().unwrap();
     *spf = video_qos.spf();
-    if *ratio != video_qos.ratio() {
-        *ratio = video_qos.ratio();
+    let encoder_ratio = video_qos.encoder_ratio();
+    if *ratio != encoder_ratio {
+        *ratio = encoder_ratio;
         if encoder.support_changing_quality() {
             allow_err!(encoder.set_quality(*ratio));
             video_qos.store_bitrate(encoder.bitrate());

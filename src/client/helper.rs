@@ -11,6 +11,10 @@ pub struct QualityStatus {
     pub fps: HashMap<usize, i32>,
     pub delay: Option<i32>,
     pub target_bitrate: Option<i32>,
+    pub target_fps: Option<i32>,
+    pub qos_tier: Option<String>,
+    pub capture_scale: Option<String>,
+    pub transport: Option<String>,
     pub codec_format: Option<CodecFormat>,
     pub chroma: Option<String>,
 }

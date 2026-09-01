@@ -1,5 +1,6 @@
-use jni::objects::JByteBuffer;
+#[cfg(feature = "mediacodec")]
 use jni::objects::JByteArray;
+use jni::objects::JByteBuffer;
 use jni::objects::JString;
 use jni::objects::JValue;
 use jni::sys::jboolean;
@@ -16,10 +17,11 @@ use lazy_static::lazy_static;
 use serde::Deserialize;
 use std::ops::Not;
 use std::os::raw::c_void;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::SeqCst};
+use std::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
+#[cfg(feature = "mediacodec")]
+use std::{collections::VecDeque, sync::atomic::AtomicBool};
 
 lazy_static! {
     static ref JVM: RwLock<Option<JavaVM>> = RwLock::new(None);
@@ -32,15 +34,18 @@ lazy_static! {
     static ref CLIPBOARD_MANAGER: RwLock<Option<GlobalRef>> = RwLock::new(None);
     static ref CLIPBOARDS_HOST: Mutex<Option<MultiClipboards>> = Mutex::new(None);
     static ref CLIPBOARDS_CLIENT: Mutex<Option<MultiClipboards>> = Mutex::new(None);
-    // 远控定制：Kotlin MediaCodec 直连编码帧队列（H.264 硬编）
+    #[cfg(feature = "mediacodec")]
     static ref ENCODED_FRAMES: Mutex<VecDeque<EncodedFrame>> = Mutex::new(VecDeque::new());
+    #[cfg(feature = "mediacodec")]
     static ref ENCODED_CONFIG: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-static ref MEDIA_CODEC_MODE: AtomicBool = AtomicBool::new(false);
+    #[cfg(feature = "mediacodec")]
+    static ref MEDIA_CODEC_MODE: AtomicBool = AtomicBool::new(false);
 }
 
 const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(100);
 const MAX_AUDIO_FRAME_TIMEOUT: Duration = Duration::from_millis(1000);
 
+#[cfg(feature = "mediacodec")]
 #[derive(Default)]
 pub struct EncodedFrame {
     pub data: Vec<u8>,
@@ -147,6 +152,7 @@ pub extern "system" fn Java_ffi_FFI_onVideoFrameUpdate(
 }
 
 #[no_mangle]
+#[cfg(feature = "mediacodec")]
 pub extern "system" fn Java_ffi_FFI_onEncodedVideoConfig(
     env: JNIEnv,
     _class: JClass,
@@ -158,6 +164,7 @@ pub extern "system" fn Java_ffi_FFI_onEncodedVideoConfig(
 }
 
 #[no_mangle]
+#[cfg(feature = "mediacodec")]
 pub extern "system" fn Java_ffi_FFI_onEncodedVideoFrame(
     env: JNIEnv,
     _class: JClass,
@@ -176,18 +183,18 @@ pub extern "system" fn Java_ffi_FFI_onEncodedVideoFrame(
     }
 }
 
-// 取走队列中的编码帧（供 video_service 发送）
+#[cfg(feature = "mediacodec")]
 pub fn take_encoded_frames() -> Vec<EncodedFrame> {
     let mut q = ENCODED_FRAMES.lock().unwrap();
     q.drain(..).collect()
 }
 
-// 取走 SPS/PPS 配置（只发送一次）
+#[cfg(feature = "mediacodec")]
 pub fn take_encoded_config() -> Vec<u8> {
     std::mem::take(&mut *ENCODED_CONFIG.lock().unwrap())
 }
 
-// 是否启用 MediaCodec 直连编码
+#[cfg(feature = "mediacodec")]
 pub fn media_codec_mode() -> bool {
     MEDIA_CODEC_MODE.load(SeqCst)
 }

@@ -1099,10 +1099,14 @@ impl Connection {
                     // The control end will jump out of the loop after receiving LoginResponse and will not reply to the TestDelay
                     if conn.last_test_delay.is_none() && !(conn.port_forward_socket.is_some() && conn.authorized) {
                         conn.last_test_delay = Some(Instant::now());
+                        let qos = video_service::VIDEO_QOS.lock().unwrap().snapshot();
                         let mut msg_out = Message::new();
                         msg_out.set_test_delay(TestDelay{
                             last_delay: conn.network_delay,
-                            target_bitrate: video_service::VIDEO_QOS.lock().unwrap().bitrate(),
+                            target_bitrate: qos.target_bitrate,
+                            target_fps: qos.target_fps,
+                            qos_tier: qos.qos_tier.to_owned(),
+                            capture_scale: qos.capture_scale.to_owned(),
                             ..Default::default()
                         });
                         conn.send(msg_out.into()).await;
@@ -4668,10 +4672,14 @@ impl Connection {
                 image_quality = q.value();
             }
             if image_quality > 0 {
-                video_service::VIDEO_QOS
+                let _capture_scale_changed = video_service::VIDEO_QOS
                     .lock()
                     .unwrap()
                     .user_image_quality(self.inner.id(), image_quality);
+                #[cfg(target_os = "android")]
+                if _capture_scale_changed {
+                    self.refresh_video_display(None);
+                }
             }
         }
         if o.custom_fps > 0 {
@@ -6863,10 +6871,19 @@ mod raii {
         fn drop(&mut self) {
             if self.1 == AuthConnType::Remote || self.1 == AuthConnType::ViewCamera {
                 scrap::codec::Encoder::update(scrap::codec::EncodingUpdate::Remove(self.0));
-                video_service::VIDEO_QOS
+                let _capture_scale_changed = video_service::VIDEO_QOS
                     .lock()
                     .unwrap()
                     .on_connection_close(self.0);
+                #[cfg(target_os = "android")]
+                if _capture_scale_changed {
+                    video_service::refresh();
+                    super::CLIENT_SERVER.read().unwrap().set_video_service_opt(
+                        None,
+                        video_service::OPTION_REFRESH,
+                        super::service::SERVICE_OPTION_VALUE_TRUE,
+                    );
+                }
             }
             // Clear per-connection state to avoid stale behavior if conn ids are reused.
             #[cfg(not(any(target_os = "android", target_os = "ios")))]

@@ -18,6 +18,10 @@ use crate::{
     CodecFormat, EncodeInput, EncodeYuvFormat, ImageRgb, ImageTexture,
 };
 
+#[path = "bitrate_policy.rs"]
+mod bitrate_policy;
+pub use bitrate_policy::fps_bitrate_scale;
+
 #[cfg(any(
     feature = "hwcodec",
     feature = "mediacodec",

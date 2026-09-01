@@ -99,6 +99,10 @@ pub const SEC30: Duration = Duration::from_secs(30);
 // Empirical restart reconnect grace window.
 const RESTART_REMOTE_DEVICE_GRACE: Duration = Duration::from_secs(5 * 60);
 pub const VIDEO_QUEUE_SIZE: usize = 120;
+
+pub(crate) fn normalize_custom_fps(fps: i32) -> i32 {
+    fps.clamp(10, 60)
+}
 const MAX_DECODE_FAIL_COUNTER: usize = 3;
 
 #[cfg(target_os = "linux")]
@@ -2306,10 +2310,7 @@ impl LoginConfigHandler {
             msg.custom_image_quality = quality << 8;
             #[cfg(feature = "flutter")]
             if let Some(custom_fps) = self.options.get("custom-fps") {
-                let mut custom_fps = custom_fps.parse().unwrap_or(60);
-                if !allow_more && custom_fps > 60 {
-                    custom_fps = 60;
-                }
+                let custom_fps = normalize_custom_fps(custom_fps.parse().unwrap_or(60));
                 msg.custom_fps = custom_fps;
                 *self.custom_fps.lock().unwrap() = Some(custom_fps as _);
             }
@@ -2502,6 +2503,7 @@ impl LoginConfigHandler {
     /// * `fps` - The given fps.
     /// * `save_config` - Save the config.
     pub fn set_custom_fps(&mut self, fps: i32, save_config: bool) -> Message {
+        let fps = normalize_custom_fps(fps);
         let mut misc = Misc::new();
         misc.set_option(OptionMessage {
             custom_fps: fps,
