@@ -34,11 +34,12 @@ lazy_static! {
     static ref CLIPBOARD_MANAGER: RwLock<Option<GlobalRef>> = RwLock::new(None);
     static ref CLIPBOARDS_HOST: Mutex<Option<MultiClipboards>> = Mutex::new(None);
     static ref CLIPBOARDS_CLIENT: Mutex<Option<MultiClipboards>> = Mutex::new(None);
-    #[cfg(feature = "mediacodec")]
+}
+
+#[cfg(feature = "mediacodec")]
+lazy_static! {
     static ref ENCODED_FRAMES: Mutex<VecDeque<EncodedFrame>> = Mutex::new(VecDeque::new());
-    #[cfg(feature = "mediacodec")]
     static ref ENCODED_CONFIG: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-    #[cfg(feature = "mediacodec")]
     static ref MEDIA_CODEC_MODE: AtomicBool = AtomicBool::new(false);
 }
 
