@@ -55,6 +55,19 @@ class ReleaseScopeTest(unittest.TestCase):
         )
         self.assertIn("LinkRemote-${VERSION}-web-management.zip", workflow)
 
+    def test_release_versions_are_consistent(self):
+        cargo_toml = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        cargo_lock = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
+        flutter = (ROOT / "flutter" / "pubspec.yaml").read_text(encoding="utf-8")
+        homepage = (ROOT / "server" / "site-root" / "index.html").read_text(encoding="utf-8")
+        version = re.search(r'(?m)^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', cargo_toml)
+        self.assertIsNotNone(version)
+        version = version.group(1)
+        self.assertRegex(cargo_lock, rf'(?m)^name = "linkremote"\nversion = "{re.escape(version)}"$')
+        self.assertRegex(flutter, rf'(?m)^version: {re.escape(version)}\+[0-9]+$')
+        self.assertIn(f'VERSION: "{version}"', text("linkremote-release.yml"))
+        self.assertIn(f'v{version} ·', homepage)
+
     def test_product_ci_checks_scope_and_web_without_release_uploads(self):
         workflow = text("linkremote-ci.yml")
         self.assertIn("python .github/tests/test_release_scope.py -v", workflow)
