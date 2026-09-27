@@ -67,6 +67,17 @@ class ReleaseScopeTest(unittest.TestCase):
         self.assertRegex(flutter, rf'(?m)^version: {re.escape(version)}\+[0-9]+$')
         self.assertIn(f'VERSION: "{version}"', text("linkremote-release.yml"))
         self.assertIn(f'v{version} ·', homepage)
+        portable = (ROOT / "libs" / "portable" / "Cargo.toml").read_text(encoding="utf-8")
+        portable_lock = (ROOT / "libs" / "portable" / "Cargo.lock").read_text(encoding="utf-8")
+        self.assertIn(f'version = "{version}"', portable)
+        self.assertRegex(portable_lock, rf'(?m)^name = "linkremote-portable-packer"\nversion = "{re.escape(version)}"$')
+
+    def test_windows_portable_wrapper_uses_own_brand(self):
+        portable = (ROOT / "libs" / "portable" / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn('ProductName = "LinkRemote"', portable)
+        self.assertIn('FileDescription = "LinkRemote Remote Access"', portable)
+        self.assertNotIn('RustDesk Remote Desktop', portable)
+        self.assertIn('linkremote-portable-packer.exe', text("linkremote-release.yml"))
 
     def test_product_ci_checks_scope_and_web_without_release_uploads(self):
         workflow = text("linkremote-ci.yml")
