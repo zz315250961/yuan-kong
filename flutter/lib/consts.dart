@@ -268,7 +268,7 @@ const double kDesktopFileTransferHeaderHeight = 25.0;
 
 const double kMinFps = 10;
 const double kDefaultFps = 60;
-const double kMaxFps = 60;
+const double kMaxFps = 120;
 
 const double kMinQuality = 10;
 const double kDefaultQuality = 50;

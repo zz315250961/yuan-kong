@@ -12,7 +12,8 @@ use std::{
 /*
 FPS and ratio adjustment use the shared four-tier network policy. Good samples recover
 slowly after a hysteresis window; congested samples reduce FPS and bitrate immediately.
-The effective FPS always remains within the user's 10-60 FPS cap.
+The effective FPS always remains within the user's 10-120 FPS cap on Windows,
+or 10-60 FPS on other hosts.
 
 delay:
     use delay minus RTT as the actual network delay
@@ -565,7 +566,7 @@ mod tests {
         assert_eq!(qos.highest_fps(), 60);
         qos.user_custom_fps(7, 45);
         assert_eq!(qos.highest_fps(), 45);
-        qos.user_custom_fps(7, 61);
+        qos.user_custom_fps(7, MAX_FPS + 1);
         assert_eq!(qos.highest_fps(), 45);
     }
 
@@ -573,7 +574,7 @@ mod tests {
     fn a_new_connection_starts_at_the_safe_initial_fps() {
         let qos = connected_qos();
         assert_eq!(qos.fps(), INIT_FPS);
-        assert_eq!(qos.encoder_fps(), MAX_FPS);
+        assert_eq!(qos.encoder_fps(), FPS);
     }
 
     #[test]
@@ -609,7 +610,8 @@ mod tests {
     fn client_fps_normalization_matches_the_server_contract() {
         assert_eq!(crate::client::normalize_custom_fps(5), 10);
         assert_eq!(crate::client::normalize_custom_fps(45), 45);
-        assert_eq!(crate::client::normalize_custom_fps(120), 60);
+        assert_eq!(crate::client::normalize_custom_fps(120), 120);
+        assert_eq!(crate::client::normalize_custom_fps(200), 120);
     }
 
     #[test]

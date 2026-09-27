@@ -3,108 +3,80 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="LinkRemote 账号与设备管理">
-  <title>LinkRemote 管理中心</title>
-  <link rel="stylesheet" href="/assets/app.css">
-  <script type="module" src="/assets/app.js"></script>
+  <meta name="description" content="LinkRemote 远控为 Windows 与 Android 提供清晰、流畅的远程控制，并在网页端统一管理账号和设备。">
+  <meta name="theme-color" content="#f5f3ee">
+  <title>LinkRemote 远控｜连接自己的设备</title>
+  <link rel="icon" href="/remote/assets/app-icon.png">
+  <link rel="stylesheet" href="/remote/assets/site.css?v=20260927">
 </head>
 <body>
-  <main class="app-shell">
-    <header class="brand-bar">
-      <a class="brand" href="/" aria-label="LinkRemote 管理中心">
-        <span class="brand-mark" aria-hidden="true">LR</span>
-        <span><strong>LinkRemote</strong><small>账号与设备管理</small></span>
-      </a>
-      <span class="scope-note">此网页不提供远程控制</span>
-    </header>
+  <header class="site-header">
+    <a class="brand" href="/remote/" aria-label="LinkRemote 远控首页">
+      <img src="/remote/assets/app-icon.png" width="42" height="42" alt="">
+      <span><strong>LinkRemote</strong><small>远控</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="#product">产品</a>
+      <a href="#download">下载</a>
+      <a href="#help">帮助</a>
+    </nav>
+    <div class="header-actions">
+      <a class="text-link" href="/remote/manage">登录</a>
+      <a class="button button-primary" href="/remote/manage">进入管理端</a>
+    </div>
+  </header>
 
-    <section id="login-view" class="auth-view" data-view="login">
-      <div class="auth-copy">
-        <p class="eyebrow">PERSONAL CONSOLE</p>
-        <h1 tabindex="-1">管理你的远控设备</h1>
-        <p>登录后可查看设备 ID、最近登录时间，以及从账号列表移除旧设备。</p>
-      </div>
-      <form id="login-form" class="panel form-stack">
-        <h2>登录账号</h2>
-        <label>邮箱<input name="username" type="email" autocomplete="username" required></label>
-        <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
-        <button class="primary" type="submit">登录</button>
-        <div class="form-links">
-          <button type="button" data-show-view="register">注册账号</button>
-          <button type="button" data-show-view="reset">忘记密码</button>
+  <main>
+    <section id="product" class="hero">
+      <div class="hero-copy">
+        <h1>连接自己的设备，<br>像坐在它面前一样。</h1>
+        <p>LinkRemote 为 Windows 与 Android 提供清晰、流畅的远程控制，并在网页端统一管理账号和设备。</p>
+        <div id="download" class="download-actions">
+          <a class="button button-primary download-button" href="/download/LinkRemote-windows-x64.exe">
+            <span class="platform-icon" aria-hidden="true">⊞</span>
+            下载 Windows 版
+          </a>
+          <a class="button button-secondary download-button" href="/download/LinkRemote-android-arm64.apk">
+            <span class="platform-icon android-icon" aria-hidden="true">◆</span>
+            下载 Android 版
+          </a>
         </div>
-      </form>
-    </section>
+        <a class="management-note" href="/remote/manage">网页端仅用于账号与设备管理 <span aria-hidden="true">→</span></a>
+      </div>
 
-    <section id="register-view" class="auth-view" data-view="register" hidden>
-      <div class="auth-copy">
-        <p class="eyebrow">CREATE ACCOUNT</p>
-        <h1 tabindex="-1">创建个人账号</h1>
-        <p>验证码只用于确认邮箱。注册成功后会通过安全 Cookie 保持登录。</p>
-      </div>
-      <form id="register-form" class="panel form-stack">
-        <h2>注册</h2>
-        <label>邮箱<input name="username" type="email" autocomplete="email" required></label>
-        <div class="code-row">
-          <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
-          <button type="button" data-send-code="register">发送验证码</button>
+      <div class="product-preview" aria-label="LinkRemote 连接方式示意">
+        <div class="diagram-heading"><span>连接路径</span><span class="diagram-status"><i></i> 自建节点</span></div>
+        <div class="connection-diagram">
+          <div class="diagram-device"><span class="diagram-icon" aria-hidden="true">▣</span><small>控制端</small><strong>你的设备</strong><span>Windows · Android</span></div>
+          <div class="diagram-link" aria-hidden="true"><span></span><b>安全连接</b><span></span></div>
+          <div class="diagram-device remote-device"><span class="diagram-icon" aria-hidden="true">▣</span><small>被控端</small><strong>远端设备</strong><span>Windows · Android</span></div>
         </div>
-        <label>设置密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
-        <button class="primary" type="submit">注册并登录</button>
-        <button type="button" data-show-view="login">返回登录</button>
-      </form>
-    </section>
-
-    <section id="reset-view" class="auth-view" data-view="reset" hidden>
-      <div class="auth-copy">
-        <p class="eyebrow">ACCOUNT RECOVERY</p>
-        <h1 tabindex="-1">重置密码</h1>
-        <p>重置完成后，所有已登录设备都需要重新登录。</p>
-      </div>
-      <form id="reset-form" class="panel form-stack">
-        <h2>找回账号</h2>
-        <label>邮箱<input name="email" type="email" autocomplete="email" required></label>
-        <div class="code-row">
-          <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
-          <button type="button" data-send-code="reset">发送验证码</button>
-        </div>
-        <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
-        <button class="primary" type="submit">重置密码</button>
-        <button type="button" data-show-view="login">返回登录</button>
-      </form>
-    </section>
-
-    <section id="dashboard-view" data-view="dashboard" hidden>
-      <div class="dashboard-heading">
-        <div><p class="eyebrow">DEVICE DIRECTORY</p><h1 tabindex="-1">设备与账号</h1></div>
-        <div class="heading-actions">
-          <button type="button" id="refresh-devices">刷新设备</button>
-          <button type="button" id="logout-button">退出登录</button>
-        </div>
-      </div>
-      <div class="dashboard-grid">
-        <aside class="panel account-panel">
-          <p class="label">当前账号</p>
-          <p id="account-email" class="account-email">—</p>
-          <form id="change-email-form" class="form-stack compact">
-            <h2>更换绑定邮箱</h2>
-            <label>新邮箱<input name="new_email" type="email" autocomplete="email" required></label>
-            <div class="code-row">
-              <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
-              <button type="button" data-send-code="change_email">发送验证码</button>
-            </div>
-            <label>当前密码<input name="password" type="password" autocomplete="current-password" required></label>
-            <button class="primary" type="submit">确认更换</button>
-          </form>
-        </aside>
-        <section class="devices-panel" aria-labelledby="devices-title">
-          <div class="section-title"><div><p class="label">MY DEVICES</p><h2 id="devices-title">账号设备</h2></div><span id="device-count">0 台</span></div>
-          <div id="device-list" class="device-list" aria-busy="false"></div>
-        </section>
+        <div class="diagram-bottom"><span>优先直连，必要时通过自建服务器中继</span><span>画质与帧率随连接状态调节</span></div>
       </div>
     </section>
 
-    <div id="live-status" class="live-status" aria-live="polite"></div>
+    <section class="benefits" aria-labelledby="benefits-title">
+      <h2 id="benefits-title">把画质、帧率与稳定性放在一起设计</h2>
+      <div class="benefit-list">
+        <article><h3>清晰画面</h3><p>自适应码率与分辨率，按照网络状况保持文字和细节清晰可读。</p></article>
+        <article><h3>按能力调节帧率</h3><p>Windows 桌面端可设置最高 120 FPS；实际帧率取决于显示器、编解码器、设备性能和网络。Android 被控端上限为 60 FPS。</p></article>
+        <article><h3>自己的服务器</h3><p>连接通过自建 ID 与中继服务完成，账号、设备和服务密钥由自己管理。</p></article>
+      </div>
+    </section>
+
+    <section id="help" class="help-section">
+      <div>
+        <h2>电脑负责远控，网页负责管理。</h2>
+        <p>网页端不获取屏幕、摄像头或麦克风权限。需要远程连接时，请打开客户端。iOS 端仅提供控制能力，不作为无人值守被控端。</p>
+      </div>
+      <a class="button button-secondary" href="/remote/manage">管理账号与设备</a>
+    </section>
   </main>
+
+  <footer>
+    <span>© 2026 LinkRemote 远控</span>
+    <span>基于 AGPL-3.0 开源软件构建</span>
+    <a href="https://github.com/zz315250961/yuan-kong" rel="noreferrer">源码与开源许可</a>
+  </footer>
 </body>
 </html>

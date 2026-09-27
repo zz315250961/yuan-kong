@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>RustDesk</string>
+    <string>LinkRemote</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
 	<key>CFBundleName</key>
-	<string>RustDesk</string>
+	<string>LinkRemote</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -32,10 +32,10 @@
 			<key>CFBundleURLIconFile</key>
 			<string></string>
 			<key>CFBundleURLName</key>
-			<string>com.carriez.rustdesk</string>
+			<string>top.zperme.linkremote</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>rustdesk</string>
+				<string>linkremote</string>
 			</array>
 		</dict>
 	</array>
@@ -74,9 +74,7 @@
   <string>This app needs camera access to scan QR codes</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>This app needs photo library access to get QR codes from image</string>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
-	<key>UIApplicationSupportsIndirectInputEvents</key>
-	<true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>LinkRemote connects to your devices on the local network.</string>
 </dict>
 </plist>

@@ -17,26 +17,23 @@ def on_block(source):
 
 
 class ReleaseScopeTest(unittest.TestCase):
-    def test_upstream_release_workflows_are_manual_only(self):
+    def test_upstream_release_workflows_are_removed(self):
         for name in (
             "flutter-tag.yml",
             "flutter-nightly.yml",
             "fdroid.yml",
             "flutter-ci.yml",
+            "remote-desk-build.yml",
         ):
-            block = on_block(text(name))
-            self.assertIn("workflow_dispatch:", block, name)
-            self.assertNotIn("push:", block, name)
-            self.assertNotIn("pull_request:", block, name)
-            self.assertNotIn("schedule:", block, name)
+            self.assertFalse((WORKFLOWS / name).exists(), name)
 
     def test_only_product_release_responds_to_version_tags(self):
-        block = on_block(text("remote-desk-build.yml"))
+        block = on_block(text("linkremote-release.yml"))
         self.assertIn("push:", block)
         self.assertIn("v[0-9]+.[0-9]+.[0-9]+", block)
 
     def test_product_release_contains_only_supported_architectures(self):
-        workflow = text("remote-desk-build.yml")
+        workflow = text("linkremote-release.yml")
         self.assertIn("x86_64-pc-windows-msvc", workflow)
         self.assertIn("aarch64-linux-android", workflow)
         for unsupported in (
@@ -49,7 +46,7 @@ class ReleaseScopeTest(unittest.TestCase):
             self.assertNotIn(unsupported, workflow)
 
     def test_product_release_packages_web_management(self):
-        workflow = text("remote-desk-build.yml")
+        workflow = text("linkremote-release.yml")
         self.assertIn("web-management:", workflow)
         self.assertIn(
             "python -m unittest discover -s server/linkremote-api/tests -v",

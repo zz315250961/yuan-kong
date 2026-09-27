@@ -131,9 +131,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
         ? const SizedBox(height: 0)
         : InkWell(
             onTap: () async {
-              // 远控定制：打开实际更新下载地址（原为写死的 rustdesk.com）
+              // LinkRemote 定制：使用自有下载页作为兜底。
               final url = updateUrl.isEmpty
-                  ? 'https://rustdesk.com/download'
+                  ? 'https://zperme.top/#download'
                   : updateUrl;
               // https://pub.dev/packages/url_launcher#configuration
               // https://developer.android.com/training/package-visibility/use-cases#open-urls-custom-tabs

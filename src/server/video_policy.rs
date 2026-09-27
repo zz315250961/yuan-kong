@@ -1,7 +1,9 @@
 use scrap::codec::Quality;
 
 pub const MIN_FPS: u32 = 10;
-pub const MAX_FPS: u32 = 60;
+// High-refresh capture is currently supported only by the Windows desktop path.
+// Android and the other hosts retain the proven 60 FPS ceiling.
+pub const MAX_FPS: u32 = if cfg!(target_os = "windows") { 120 } else { 60 };
 pub const DEFAULT_FPS: u32 = 60;
 pub const INITIAL_FPS: u32 = 30;
 pub const RECOVERY_SAMPLES: usize = 3;
@@ -90,6 +92,13 @@ mod tests {
     fn recovery_requires_a_ready_hysteresis_window() {
         assert_eq!(next_fps(30, 60, NetworkTier::Good, false), 30);
         assert_eq!(next_fps(30, 60, NetworkTier::Good, true), 35);
+    }
+
+    #[test]
+    fn high_refresh_respects_platform_and_user_cap() {
+        assert_eq!(next_fps(115, 120, NetworkTier::Good, true), MAX_FPS);
+        assert_eq!(next_fps(120, 120, NetworkTier::Congested, false), MAX_FPS * 3 / 4);
+        assert_eq!(next_fps(120, 120, NetworkTier::Severe, false), MAX_FPS / 2);
     }
 
     #[test]

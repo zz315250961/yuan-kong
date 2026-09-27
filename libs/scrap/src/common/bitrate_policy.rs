@@ -1,5 +1,5 @@
 pub fn fps_bitrate_scale(target_fps: u32) -> f32 {
-    ((target_fps.max(1) as f32 / 30.0).sqrt()).clamp(0.75, 1.45)
+    ((target_fps.max(1) as f32 / 30.0).sqrt()).clamp(0.75, 2.0)
 }
 
 #[cfg(test)]
@@ -20,6 +20,6 @@ mod tests {
     #[test]
     fn invalid_extremes_are_clamped() {
         assert!((fps_bitrate_scale(1) - 0.75).abs() < 0.001);
-        assert!((fps_bitrate_scale(120) - 1.45).abs() < 0.001);
+        assert!((fps_bitrate_scale(120) - 2.0).abs() < 0.001);
     }
 }

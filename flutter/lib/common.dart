@@ -2437,7 +2437,7 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
               'Y';
       if (!allowDeepLinkServerSettings) {
         debugPrint(
-            "Ignore rustdesk://config because $kOptionAllowDeepLinkServerSettings is not enabled.");
+            "Ignore linkremote://config because $kOptionAllowDeepLinkServerSettings is not enabled.");
         // Keep the user-facing error generic; detailed rejection reason is in debug logs.
         // Delay toast to avoid missing overlay during cold-start deeplink handling.
         Timer(Duration(seconds: 1), () {
@@ -2458,7 +2458,7 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
           bind.mainGetBuildinOption(key: kOptionAllowDeepLinkPassword) == 'Y';
       if (!allowDeepLinkPassword) {
         debugPrint(
-            "Ignore rustdesk://password because $kOptionAllowDeepLinkPassword is not enabled.");
+            "Ignore linkremote://password because $kOptionAllowDeepLinkPassword is not enabled.");
         // Keep the user-facing error generic; detailed rejection reason is in debug logs.
         // Delay toast to avoid missing overlay during cold-start deeplink handling.
         Timer(Duration(seconds: 1), () {
@@ -2483,9 +2483,9 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
   } else if (uri.authority.length > 2 &&
       (uri.path.length <= 1 ||
           (uri.path == '/r' || uri.path.startsWith('/r@')))) {
-    // rustdesk://<connect-id>
-    // rustdesk://<connect-id>/r
-    // rustdesk://<connect-id>/r@<server>
+    // linkremote://<connect-id>
+    // linkremote://<connect-id>/r
+    // linkremote://<connect-id>/r@<server>
     command = '--connect';
     id = uri.authority;
     if (uri.path.length > 1) {
@@ -2872,7 +2872,7 @@ Future<void> onActiveWindowChanged() async {
     } catch (err) {
       debugPrintStack(label: "$err");
     } finally {
-      debugPrint("Start closing RustDesk...");
+      debugPrint("Start closing LinkRemote...");
       await windowManager.setPreventClose(false);
       await windowManager.close();
       if (isMacOS) {
@@ -3089,7 +3089,7 @@ Future<void> updateSystemWindowTheme() async {
 ///
 /// Note: not found a general solution for rust based AVFoundation bingding.
 /// [AVFoundation] crate has compile error.
-const kMacOSPermChannel = MethodChannel("org.rustdesk.rustdesk/host");
+const kMacOSPermChannel = MethodChannel("top.zperme.linkremote/host");
 
 enum PermissionAuthorizeType {
   undetermined,

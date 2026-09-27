@@ -17,6 +17,7 @@ class ApiTestCase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         app.DB_PATH = os.path.join(self.temp_dir.name, "test.db")
+        app.RELEASE_MANIFEST_PATH = os.path.join(self.temp_dir.name, "release.json")
         app._rate_hits.clear()
         app.init_db()
         self.server = app.make_server(port=0)
@@ -102,6 +103,24 @@ class ApiTestCase(unittest.TestCase):
         self.assertTrue(json.loads(raw)["ok"])
         self.assertTrue(os.path.exists(app.DB_PATH))
 
+    def test_update_manifest_selects_supported_platform_without_cross_app_api(self):
+        Path(app.RELEASE_MANIFEST_PATH).write_text(json.dumps({
+            "windows_x64": "https://zperme.top/download/LinkRemote-1.0.36-x86_64.exe",
+            "android_arm64": "https://zperme.top/download/LinkRemote-1.0.36-android-signed.apk",
+        }), encoding="utf-8")
+        cases = {
+            "/api/version/latest?platform=windows": ".exe",
+            "/api/version/latest?platform=android": ".apk",
+            "/api/version/latest": ".apk",  # older clients did not send a platform
+        }
+        for path, extension in cases.items():
+            status, _, raw = self.request("GET", path)
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(raw)["url"].endswith(extension))
+        status, _, raw = self.request("GET", "/api/version/latest?platform=ios")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw), {"url": ""})
+
     def test_web_login_sets_http_only_cookie_without_returning_token(self):
         self.seed_user("owner@example.test", "secret1")
         status, headers, raw = self.request(
@@ -117,6 +136,36 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn("linkremote_session=", cookie)
         self.assertIn("HttpOnly", cookie)
         self.assertIn("SameSite=Lax", cookie)
+        self.assertIn("Path=/remote", cookie)
+
+    def test_website_prefix_keeps_native_api_routes_available(self):
+        for path in ("/remote", "/remote/", "/remote/manage", "/remote/assets/app.js"):
+            status, _, _ = self.request("GET", path)
+            self.assertEqual(status, 200, path)
+        status, _, raw = self.request("GET", "/remote/api/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["ok"])
+        status, _, raw = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["ok"])
+
+    def test_prefixed_web_login_is_cookie_scoped_and_origin_checked(self):
+        self.seed_user("prefixed@example.test", "secret1")
+        status, headers, raw = self.request(
+            "POST",
+            "/remote/api/web/login",
+            {"username": "prefixed@example.test", "password": "secret1"},
+            {"Origin": f"http://127.0.0.1:{self.port}"},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("Path=/remote", headers["Set-Cookie"])
+        self.assertNotIn("access_token", json.loads(raw))
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        status, _, _ = self.request(
+            "POST", "/remote/api/web/logout", {},
+            {"Cookie": cookie, "Origin": "https://evil.example"},
+        )
+        self.assertEqual(status, 403)
 
     def test_native_bearer_login_contract_remains_available(self):
         self.seed_user("native@example.test", "secret1")
@@ -195,11 +244,14 @@ class ApiTestCase(unittest.TestCase):
         )
         self.assertEqual(len(json.loads(raw)["data"]), 1)
 
-    def test_management_page_and_assets_are_served(self):
+    def test_public_management_pages_and_assets_are_served(self):
         for path, content_type in (
             ("/", "text/html"),
+            ("/manage", "text/html"),
+            ("/assets/site.css", "text/css"),
             ("/assets/app.css", "text/css"),
             ("/assets/app.js", "text/javascript"),
+            ("/assets/app-icon.png", "image/png"),
         ):
             status, headers, raw = self.request("GET", path)
             self.assertEqual(status, 200, path)
@@ -220,7 +272,7 @@ class ApiTestCase(unittest.TestCase):
             self.assertEqual(status, 404, path)
 
     def test_web_bundle_contains_required_account_and_device_contracts(self):
-        _, _, html = self.request("GET", "/")
+        _, _, html = self.request("GET", "/manage")
         _, _, js = self.request("GET", "/assets/app.js")
         html = html.decode("utf-8")
         js = js.decode("utf-8")

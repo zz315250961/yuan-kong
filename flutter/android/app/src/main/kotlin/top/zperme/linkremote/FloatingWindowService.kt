@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package top.zperme.linkremote
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent

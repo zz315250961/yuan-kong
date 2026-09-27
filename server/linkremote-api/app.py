@@ -7,7 +7,7 @@ LinkRemote 认证 API 服务（自建，替代 RustDesk 官方账号服务）
   - 邮箱注册 / 登录（返回 access_token）
   - 会话校验（/api/currentUser）与登出（/api/logout）
   - 邮箱验证码：注册验证 / 忘记密码 / 更换绑定邮箱
-  - 地址簿 / 分组 / 设备列表等 RustDesk 客户端接口的空响应桩
+  - 地址簿 / 分组 / 设备列表等兼容客户端接口的空响应桩
   - /api/login-options 返回空数组（客户端不再展示第三方登录按钮）
 
 设计：
@@ -41,7 +41,7 @@ import time
 from email.message import EmailMessage
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -49,9 +49,13 @@ DB_PATH = os.environ.get(
     "LINKREMOTE_DB_PATH", os.path.join(DATA_DIR, "linkremote.db")
 )
 WEB_DIR = os.path.join(BASE_DIR, "web")
+RELEASE_MANIFEST_PATH = os.environ.get(
+    "LINKREMOTE_RELEASE_MANIFEST", os.path.join(BASE_DIR, "release.json")
+)
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("LINKREMOTE_PORT", "21114"))
 WEB_COOKIE_NAME = "linkremote_session"
+WEB_PREFIX = "/remote"
 COOKIE_SECURE = os.environ.get("LINKREMOTE_COOKIE_SECURE", "1") != "0"
 ALLOWED_ORIGIN = os.environ.get("LINKREMOTE_ALLOWED_ORIGIN", "").rstrip("/")
 TOKEN_TTL_DAYS = 180
@@ -66,6 +70,12 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 VALID_PURPOSES = ("register", "reset", "change_email")
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8", "no-cache"),
+    "/manage": ("manage.html", "text/html; charset=utf-8", "no-cache"),
+    "/assets/site.css": (
+        "assets/site.css",
+        "text/css; charset=utf-8",
+        "public, max-age=3600",
+    ),
     "/assets/app.css": (
         "assets/app.css",
         "text/css; charset=utf-8",
@@ -75,6 +85,11 @@ STATIC_FILES = {
         "assets/app.js",
         "text/javascript; charset=utf-8",
         "public, max-age=3600",
+    ),
+    "/assets/app-icon.png": (
+        "assets/app-icon.png",
+        "image/png",
+        "public, max-age=86400",
     ),
 }
 SECURITY_HEADERS = {
@@ -271,7 +286,7 @@ def auth_response(token: str, row: sqlite3.Row, web_session: bool):
             {},
         )
     cookie = (
-        f"{WEB_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax"
+        f"{WEB_COOKIE_NAME}={token}; Path={WEB_PREFIX}; HttpOnly; SameSite=Lax"
         + ("; Secure" if COOKIE_SECURE else "")
     )
     return (
@@ -802,7 +817,7 @@ class Handler(BaseHTTPRequestHandler):
         headers = {}
         if web_session:
             headers["Set-Cookie"] = (
-                f"{WEB_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; "
+                f"{WEB_COOKIE_NAME}=; Path={WEB_PREFIX}; HttpOnly; SameSite=Lax; "
                 "Max-Age=0"
                 + ("; Secure" if COOKIE_SECURE else "")
             )
@@ -861,6 +876,22 @@ class Handler(BaseHTTPRequestHandler):
     def handle_health(self):
         self._send_json({"ok": True, "service": "linkremote-api", "time": now_iso()})
 
+    def handle_version(self, platform):
+        try:
+            with open(RELEASE_MANIFEST_PATH, "r", encoding="utf-8") as source:
+                release = json.load(source)
+        except (OSError, ValueError):
+            release = {}
+        if not isinstance(release, dict):
+            release = {}
+        key = "windows_x64" if platform == "windows" else "android_arm64"
+        url = release.get(key, "") if platform in ("windows", "android", "") else ""
+        if not isinstance(url, str) or not url.startswith(
+            "https://zperme.top/download/LinkRemote-"
+        ) or not url.endswith(".exe" if key == "windows_x64" else ".apk"):
+            url = ""
+        self._send_json({"url": url}, extra_headers={"Cache-Control": "no-store"})
+
     def handle_static(self, path):
         entry = STATIC_FILES.get(path)
         if entry is None:
@@ -882,6 +913,12 @@ class Handler(BaseHTTPRequestHandler):
     def _route(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        # The website shares zperme.top with another app whose /api/ route must
+        # remain untouched. Native clients still use the unprefixed API.
+        if path == WEB_PREFIX:
+            path = "/"
+        elif path.startswith(WEB_PREFIX + "/"):
+            path = path[len(WEB_PREFIX):]
         method = self.command.upper()
 
         if method == "OPTIONS":
@@ -894,6 +931,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self.handle_health()
+        if path == "/api/version/latest" and method == "GET":
+            platform = parse_qs(parsed.query).get("platform", [""])[0].lower()
+            return self.handle_version(platform)
 
         if path == "/api/register" and method == "POST":
             return self.handle_register()
@@ -922,7 +962,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/peers/") and method == "DELETE":
             return self.handle_delete_device(path.rsplit("/", 1)[-1])
 
-        # 地址簿（RustDesk 客户端契约）
+        # 地址簿（兼容客户端契约）
         if path == "/api/ab" or path.startswith("/api/ab/"):
             if method == "GET":
                 # GET /api/ab: 空地址簿返回字符串 null（客户端视为正常空 AB）

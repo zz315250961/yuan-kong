@@ -193,10 +193,25 @@ fn check_update(manually: bool) -> ResultType<()> {
     if update_url.is_empty() {
         log::debug!("No update available.");
     } else {
-        let download_url = update_url.replace("tag", "download");
-        let version = download_url.split('/').last().unwrap_or_default();
+        let is_linkremote_asset = update_url.starts_with("https://zperme.top/download/LinkRemote-")
+            && get_download_file_from_url(&update_url).is_some();
+        let release_url = update_url.replace("tag", "download");
+        let version = if is_linkremote_asset {
+            crate::common::extract_version_from_url(&update_url)
+        } else {
+            release_url.split('/').last().unwrap_or_default().to_owned()
+        };
         #[cfg(target_os = "windows")]
-        let download_url = if cfg!(feature = "flutter") {
+        let download_url = if is_linkremote_asset {
+            if update_msi {
+                update_url
+                    .strip_suffix(".exe")
+                    .map(|prefix| format!("{prefix}.msi"))
+                    .unwrap_or(update_url.clone())
+            } else {
+                update_url.clone()
+            }
+        } else if cfg!(feature = "flutter") {
             let Some(arch) = crate::platform::windows::release_arch_suffix() else {
                 bail!(
                     "Unsupported Windows release architecture: {}",
@@ -205,14 +220,16 @@ fn check_update(manually: bool) -> ResultType<()> {
             };
             format!(
                 "{}/rustdesk-{}-{}.{}",
-                download_url,
+                release_url,
                 version,
                 arch,
                 if update_msi { "msi" } else { "exe" }
             )
         } else {
-            format!("{}/rustdesk-{}-x86-sciter.exe", download_url, version)
+            format!("{}/rustdesk-{}-x86-sciter.exe", release_url, version)
         };
+        #[cfg(not(target_os = "windows"))]
+        let download_url = release_url;
         log::debug!("New version available: {}", &version);
         let client = create_http_client_with_url_strict(&download_url)?;
         let Some(file_path) = get_download_file_from_url(&download_url) else {
@@ -354,6 +371,27 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf) {
 
 pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(url).ok()?;
+    if url.starts_with("https://zperme.top/")
+        && parsed.scheme() == "https"
+        && parsed.host_str() == Some("zperme.top")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+    {
+        let mut segments = parsed.path_segments()?;
+        let directory = segments.next()?;
+        let filename = segments.next()?;
+        if directory == "download"
+            && segments.next().is_none()
+            && filename.starts_with("LinkRemote-")
+            && (filename.ends_with(".exe") || filename.ends_with(".msi"))
+            && is_plain_update_filename(filename)
+        {
+            return Some(std::env::temp_dir().join(filename));
+        }
+    }
     // Check the raw prefix before Url normalizes default ports.
     if !url.starts_with("https://github.com/")
         || parsed.scheme() != "https"
@@ -672,10 +710,24 @@ mod tests {
     }
 
     #[test]
+    fn update_download_file_accepts_only_our_versioned_windows_assets() {
+        for name in ["LinkRemote-1.0.36-x86_64.exe", "LinkRemote-1.0.36-x86_64.msi"] {
+            let url = format!("https://zperme.top/download/{name}");
+            let file = get_download_file_from_url(&url).expect("LinkRemote release URL");
+            assert_eq!(file.file_name().and_then(|name| name.to_str()), Some(name));
+        }
+    }
+
+    #[test]
     fn update_download_file_rejects_untrusted_or_malformed_urls() {
         for url in [
             "http://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
             "https://example.com/rustdesk.exe",
+            "http://zperme.top/download/LinkRemote-1.0.36-x86_64.exe",
+            "https://zperme.top.evil.test/download/LinkRemote-1.0.36-x86_64.exe",
+            "https://zperme.top/download/LinkRemote-1.0.36-x86_64.exe?redirect=1",
+            "https://zperme.top/download/other.exe",
+            "https://zperme.top/download/nested/LinkRemote-1.0.36-x86_64.exe",
             "https://github.com/other/project/releases/download/1/rustdesk.exe",
             "https://github.com/rustdesk/rustdesk/releases/download/1/",
             "https://github.com/rustdesk/rustdesk/releases/download/1/nested/rustdesk.exe",

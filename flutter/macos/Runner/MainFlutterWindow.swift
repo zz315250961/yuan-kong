@@ -179,7 +179,7 @@ class MainFlutterWindow: NSWindow {
     }
 
     public func setMethodHandler(registrar: FlutterPluginRegistrar) {
-        let channel = FlutterMethodChannel(name: "org.rustdesk.rustdesk/host", binaryMessenger: registrar.messenger)
+        let channel = FlutterMethodChannel(name: "top.zperme.linkremote/host", binaryMessenger: registrar.messenger)
         channel.setMethodCallHandler({
             (call, result) -> Void in
                 switch call.method {

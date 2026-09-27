@@ -101,7 +101,7 @@ const RESTART_REMOTE_DEVICE_GRACE: Duration = Duration::from_secs(5 * 60);
 pub const VIDEO_QUEUE_SIZE: usize = 120;
 
 pub(crate) fn normalize_custom_fps(fps: i32) -> i32 {
-    fps.clamp(10, 60)
+    fps.clamp(10, 120)
 }
 const MAX_DECODE_FAIL_COUNTER: usize = 3;
 

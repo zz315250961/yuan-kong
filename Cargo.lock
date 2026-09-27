@@ -7258,8 +7258,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustdesk"
-version = "1.0.35"
+name = "linkremote"
+version = "1.0.36"
 dependencies = [
  "android-wakelock",
  "android_logger",

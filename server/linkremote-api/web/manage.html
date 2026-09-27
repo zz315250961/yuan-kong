@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="LinkRemote 网页设备与账号管理">
+  <meta name="theme-color" content="#f5f3ee">
+  <title>设备与账号管理｜LinkRemote 远控</title>
+  <link rel="icon" href="/remote/assets/app-icon.png">
+  <link rel="stylesheet" href="/remote/assets/app.css?v=20260927">
+  <script type="module" src="/remote/assets/app.js?v=20260927"></script>
+</head>
+<body>
+  <div class="management-shell">
+    <aside class="sidebar" aria-label="管理端导航">
+      <a class="brand" href="/remote/" aria-label="LinkRemote 远控首页">
+        <img src="/remote/assets/app-icon.png" width="42" height="42" alt="">
+        <span><strong>LinkRemote</strong><small>远控</small></span>
+      </a>
+      <nav>
+        <button class="nav-item active" type="button" data-dashboard-section="devices"><span aria-hidden="true">▣</span>设备</button>
+        <button class="nav-item" type="button" data-dashboard-section="account"><span aria-hidden="true">♙</span>账号</button>
+      </nav>
+      <div class="sidebar-footer">
+        <a href="/remote/"><span aria-hidden="true">◎</span>返回官网</a>
+        <a href="https://github.com/zz315250961/yuan-kong" rel="noreferrer"><span aria-hidden="true">▤</span>开源许可</a>
+      </div>
+    </aside>
+
+    <main class="management-content">
+      <header class="mobile-header">
+        <a class="brand" href="/remote/"><img src="/remote/assets/app-icon.png" alt=""><strong>LinkRemote</strong></a>
+        <a href="/remote/">返回官网</a>
+      </header>
+
+      <section id="login-view" class="auth-view" data-view="login">
+        <div class="auth-copy">
+          <h1 tabindex="-1">登录 LinkRemote</h1>
+          <p>在浏览器中查看账号下已绑定的 Windows 与 Android 设备。</p>
+        </div>
+        <form id="login-form" class="form-panel form-stack">
+          <h2>账号登录</h2>
+          <label>邮箱<input name="username" type="email" autocomplete="username" placeholder="name@example.com" required></label>
+          <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary" type="submit">登录</button>
+          <div class="form-links">
+            <button type="button" data-show-view="register">注册账号</button>
+            <button type="button" data-show-view="reset">忘记密码</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="register-view" class="auth-view" data-view="register" hidden>
+        <div class="auth-copy">
+          <h1 tabindex="-1">创建账号</h1>
+          <p>验证码只用于确认邮箱。注册成功后会使用安全 Cookie 保持登录。</p>
+        </div>
+        <form id="register-form" class="form-panel form-stack">
+          <h2>注册 LinkRemote</h2>
+          <label>邮箱<input name="username" type="email" autocomplete="email" required></label>
+          <div class="code-row">
+            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+            <button type="button" data-send-code="register">发送验证码</button>
+          </div>
+          <label>设置密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
+          <button class="primary" type="submit">注册并登录</button>
+          <button class="quiet" type="button" data-show-view="login">返回登录</button>
+        </form>
+      </section>
+
+      <section id="reset-view" class="auth-view" data-view="reset" hidden>
+        <div class="auth-copy">
+          <h1 tabindex="-1">重置密码</h1>
+          <p>重置完成后，其他已经登录的设备需要重新登录。</p>
+        </div>
+        <form id="reset-form" class="form-panel form-stack">
+          <h2>找回账号</h2>
+          <label>邮箱<input name="email" type="email" autocomplete="email" required></label>
+          <div class="code-row">
+            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+            <button type="button" data-send-code="reset">发送验证码</button>
+          </div>
+          <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
+          <button class="primary" type="submit">重置密码</button>
+          <button class="quiet" type="button" data-show-view="login">返回登录</button>
+        </form>
+      </section>
+
+      <section id="dashboard-view" data-view="dashboard" hidden>
+        <section id="devices-section" data-section="devices">
+          <div class="dashboard-heading">
+            <div><h1 tabindex="-1">我的设备</h1><p>查看账号下已绑定的 Windows 与 Android 设备</p></div>
+            <div class="heading-actions">
+              <label class="search-field"><span aria-hidden="true">⌕</span><input id="device-search" type="search" placeholder="搜索设备名称或 ID" autocomplete="off"></label>
+              <button type="button" id="refresh-devices">刷新</button>
+              <button class="user-menu" type="button" id="logout-button" title="退出登录"><span aria-hidden="true">♙</span><span id="user-menu">账号</span><span>退出</span></button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>设备</th><th>系统</th><th>设备 ID</th><th>状态</th><th>最后在线</th><th>操作</th></tr></thead>
+              <tbody id="device-list" aria-live="polite"></tbody>
+            </table>
+          </div>
+          <p id="device-count" class="device-count">0 台设备</p>
+        </section>
+
+        <section id="account-section" class="account-section" data-section="account">
+          <div class="section-heading"><h2>账号安全</h2><p>管理登录邮箱和密码。</p></div>
+          <dl class="account-details">
+            <div><dt>邮箱</dt><dd id="account-email">—</dd><dd><button type="button" data-toggle-email>修改邮箱</button></dd></div>
+            <div><dt>密码</dt><dd>••••••••••••</dd><dd><button type="button" data-show-view="reset">修改密码</button></dd></div>
+          </dl>
+          <form id="change-email-form" class="email-form form-stack" hidden>
+            <h3>修改绑定邮箱</h3>
+            <label>新邮箱<input name="new_email" type="email" autocomplete="email" required></label>
+            <div class="code-row">
+              <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+              <button type="button" data-send-code="change_email">发送验证码</button>
+            </div>
+            <label>当前密码<input name="password" type="password" autocomplete="current-password" required></label>
+            <div class="inline-actions"><button class="primary" type="submit">确认修改</button><button class="quiet" type="button" data-toggle-email>取消</button></div>
+          </form>
+        </section>
+
+        <p class="scope-note">网页端仅用于账号与设备管理；远程控制请使用 Windows 或 Android 客户端。</p>
+      </section>
+    </main>
+  </div>
+  <div id="live-status" class="live-status" aria-live="polite"></div>
+</body>
+</html>

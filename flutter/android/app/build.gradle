@@ -82,6 +82,7 @@ protobuf {
 }
 
 android {
+    namespace "top.zperme.linkremote"
     compileSdkVersion 34
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
@@ -96,8 +97,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.carriez.flutter_hbb"
+        applicationId "top.zperme.linkremote"
         minSdkVersion 22
         targetSdkVersion 33
         versionCode flutterVersionCode.toInteger()

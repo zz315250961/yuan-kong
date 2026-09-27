@@ -948,7 +948,7 @@ pub fn check_software_update() {
 
 // 远控定制：从下载 URL 中提取 X.Y.Z 版本号
 // （支持 https://.../download/v1.0.10/ 与 rustdesk-1.0.10-aarch64-signed.apk 等格式）
-fn extract_version_from_url(url: &str) -> String {
+pub(crate) fn extract_version_from_url(url: &str) -> String {
     let bytes = url.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -1102,6 +1102,11 @@ fn get_api_server_(api: String, custom: String) -> String {
         // （RENDEZVOUS_PORT-2 = 21114）。
         let rv = Config::get_rendezvous_server();
         if !rv.is_empty() && !is_public(&rv) {
+            if rv == config::RENDEZVOUS_SERVERS[0]
+                || rv == format!("{}:{}", config::RENDEZVOUS_SERVERS[0], config::RENDEZVOUS_PORT)
+            {
+                return config::BUILTIN_API_SERVER.to_owned();
+            }
             s0 = rv;
         }
     }
