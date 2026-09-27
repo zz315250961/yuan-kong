@@ -70,6 +70,7 @@ class ReleaseScopeTest(unittest.TestCase):
         portable = (ROOT / "libs" / "portable" / "Cargo.toml").read_text(encoding="utf-8")
         portable_lock = (ROOT / "libs" / "portable" / "Cargo.lock").read_text(encoding="utf-8")
         self.assertIn(f'version = "{version}"', portable)
+        self.assertRegex(cargo_lock, rf'(?m)^name = "linkremote-portable-packer"\nversion = "{re.escape(version)}"$')
         self.assertRegex(portable_lock, rf'(?m)^name = "linkremote-portable-packer"\nversion = "{re.escape(version)}"$')
 
     def test_windows_portable_wrapper_uses_own_brand(self):
