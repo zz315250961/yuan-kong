@@ -36,7 +36,7 @@ use winapi::{
 };
 use windows::Win32::Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ};
 
-use super::video_qos;
+use super::video_policy;
 
 const SIZE_COUNTER: usize = size_of::<i32>() * 2;
 const FRAME_ALIGN: usize = 64;
@@ -648,8 +648,8 @@ pub mod server {
                         continue;
                     }
                     if timeout_ms != last_timeout_ms
-                        && timeout_ms >= 1000 / video_qos::MAX_FPS as i32
-                        && timeout_ms <= 1000 / video_qos::MIN_FPS as i32
+                        && timeout_ms >= 1000 / video_policy::MAX_FPS as i32
+                        && timeout_ms <= 1000 / video_policy::MIN_FPS as i32
                     {
                         last_timeout_ms = timeout_ms;
                         spf = Duration::from_millis(timeout_ms as _);
