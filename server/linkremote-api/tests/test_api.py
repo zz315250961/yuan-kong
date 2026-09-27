@@ -103,6 +103,15 @@ class ApiTestCase(unittest.TestCase):
         self.assertTrue(json.loads(raw)["ok"])
         self.assertTrue(os.path.exists(app.DB_PATH))
 
+    def test_head_serves_public_pages_without_a_response_body(self):
+        for path in ("/remote/", "/remote/manage", "/api/health"):
+            get_status, get_headers, get_body = self.request("GET", path)
+            head_status, head_headers, head_body = self.request("HEAD", path)
+            self.assertEqual(head_status, get_status)
+            self.assertEqual(head_headers["Content-Length"], str(len(get_body)))
+            self.assertEqual(head_headers["Content-Type"], get_headers["Content-Type"])
+            self.assertEqual(head_body, b"")
+
     def test_update_manifest_selects_supported_platform_without_cross_app_api(self):
         Path(app.RELEASE_MANIFEST_PATH).write_text(json.dumps({
             "windows_x64": "https://zperme.top/download/LinkRemote-1.0.36-x86_64.exe",

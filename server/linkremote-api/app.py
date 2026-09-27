@@ -504,7 +504,8 @@ class Handler(BaseHTTPRequestHandler):
         for name, value in headers.items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command.upper() != "HEAD":
+            self.wfile.write(body)
 
     def _send_json(self, obj, status=200, extra_headers=None):
         self._send(
@@ -919,7 +920,7 @@ class Handler(BaseHTTPRequestHandler):
             path = "/"
         elif path.startswith(WEB_PREFIX + "/"):
             path = path[len(WEB_PREFIX):]
-        method = self.command.upper()
+        method = "GET" if self.command.upper() == "HEAD" else self.command.upper()
 
         if method == "OPTIONS":
             if not self._origin_allowed():
@@ -986,6 +987,9 @@ class Handler(BaseHTTPRequestHandler):
         self._error(404, "Not Found")
 
     def do_GET(self):
+        self._route()
+
+    def do_HEAD(self):
         self._route()
 
     def do_POST(self):
