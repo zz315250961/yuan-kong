@@ -47,6 +47,7 @@ class ReleaseScopeTest(unittest.TestCase):
 
     def test_product_release_packages_web_management(self):
         workflow = text("linkremote-release.yml")
+        self.assertIn("--class-name Rustdesk", workflow)
         self.assertIn("web-management:", workflow)
         self.assertIn(
             "python -m unittest discover -s server/linkremote-api/tests -v",

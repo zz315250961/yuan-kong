@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>zperme 应用中心 - 简洁 · 安全 · 好用</title>
+<meta name="description" content="zperme 应用中心：LinkRemote 远控与智能记账的介绍、下载和网页入口。">
+<style>
+  :root {
+    --bg: #0B1420; --bg2: #0E1B2B; --card: #13233A; --card2: #182C46;
+    --border: #223A54; --text: #EEF3F8; --muted: #93A7B8; --dim: #64798C;
+    --accent: #4FD8CF; --accent2: #2FA8B0; --warm: #FF8A5C;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(1000px 520px at 85% -10%, rgba(47,168,176,.18), transparent 60%),
+      radial-gradient(900px 480px at -10% 10%, rgba(34,66,102,.35), transparent 60%),
+      var(--bg);
+    color: var(--text); min-height: 100vh; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 64px 20px 72px; }
+
+  /* ===== Hero ===== */
+  .hero { text-align: center; margin-bottom: 56px; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; letter-spacing: 3px;
+    color: var(--muted); border: 1px solid var(--border); padding: 6px 16px; border-radius: 999px;
+    background: rgba(19,35,58,.6); }
+  .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 10px var(--accent); }
+  .hero h1 { font-size: 44px; font-weight: 800; margin: 22px 0 10px; letter-spacing: 1px;
+    background: linear-gradient(120deg, #F2F7FB 20%, #4FD8CF 85%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .hero p { color: var(--muted); font-size: 16px; }
+
+  /* ===== App 卡片 ===== */
+  .app-grid { display: grid; grid-template-columns: 1fr; gap: 22px; }
+  @media (min-width: 760px) { .app-grid { grid-template-columns: 1fr 1fr; } }
+  .app-card {
+    position: relative; background: linear-gradient(165deg, var(--card), var(--bg2));
+    border: 1px solid var(--border); border-radius: 20px; padding: 26px;
+    transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+    overflow: hidden;
+  }
+  .app-card::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(220px 90px at 90% -10%, rgba(79,216,207,.12), transparent 70%); }
+  .app-card:hover { transform: translateY(-4px); border-color: rgba(79,216,207,.5);
+    box-shadow: 0 18px 40px rgba(0,0,0,.45); }
+  .app-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .app-icon {
+    width: 64px; height: 64px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 34px; background: linear-gradient(135deg, #1E3554, #12243C);
+    border: 1px solid var(--border); box-shadow: 0 8px 20px rgba(0,0,0,.35);
+  }
+  .app-icon img { width: 64px; height: 64px; border-radius: 16px; }
+  .app-title { font-size: 20px; font-weight: 700; }
+  .app-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .badges { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .badge { font-size: 11px; color: var(--accent); border: 1px solid rgba(79,216,207,.35);
+    background: rgba(79,216,207,.08); padding: 2px 10px; border-radius: 999px; }
+  .app-desc { color: var(--muted); font-size: 14px; margin-bottom: 18px; min-height: 44px; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    font-size: 14px; font-weight: 600; padding: 11px 20px; border-radius: 12px;
+    transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #06232A;
+    box-shadow: 0 6px 18px rgba(79,216,207,.28); }
+  .btn.primary:hover { box-shadow: 0 8px 24px rgba(79,216,207,.42); }
+  .btn.ghost { color: var(--text); border: 1px solid var(--border); background: rgba(24,44,70,.6); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .empty-app { color: var(--dim); font-size: 14px; border: 1px dashed var(--border); border-radius: 20px;
+    padding: 40px; text-align: center; }
+
+  /* ===== 联系 / 页脚 ===== */
+  .contact { margin-top: 48px; text-align: center; color: var(--muted); font-size: 14px; }
+  .contact a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed rgba(79,216,207,.5); }
+  .footer { margin-top: 36px; text-align: center; color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- Hero -->
+    <header class="hero">
+      <div class="brand"><span class="dot"></span>ZPERME 应用中心</div>
+      <h1>简洁 · 安全 · 好用</h1>
+      <p>在这里下载和了解我们的应用</p>
+    </header>
+
+    <!-- 应用列表（由下方 apps 数据渲染，新增应用只需加一个对象） -->
+    <section class="app-grid" id="appGrid"></section>
+
+    <!-- 联系 -->
+    <div class="contact">
+      意见与建议：<a href="mailto:315250961@qq.com">315250961@qq.com</a>
+    </div>
+
+    <p class="footer">© 2026 zperme.top · zperme 应用中心</p>
+  </div>
+
+  <script>
+    // ===== 应用数据：新增应用只需在此追加一个对象 =====
+    const apps = [
+      {
+        icon: "💰",
+        title: "智能记账",
+        sub: "v1.0.0 · 2026-08",
+        badges: ["安卓", "网页", "iOS 开发中"],
+        desc: "截图识别自动记账、快捷分类、数据分析，支持微信/支付宝/抖音付款截图一键识别。",
+        links: [
+          { label: "⬇ 下载安卓 APK", href: "/download/app-release.apk", primary: true },
+          { label: "🌐 网页版", href: "/app/" },
+        ],
+      },
+      {
+        icon: '<img src="/remote/assets/app-icon.png" alt="">',
+        title: "LinkRemote 远控",
+        sub: "v1.0.37 · 2026-09",
+        badges: ["Windows", "Android", "网页管理", "iOS 控制端开发中"],
+        desc: "用自己的服务器连接 Windows 与 Android 设备。网页用于账号和设备管理，远程控制在客户端中完成。",
+        links: [
+          { label: "⬇ 下载 Windows 版", href: "/download/LinkRemote-windows-x64.exe", primary: true },
+          { label: "下载 Android 版", href: "/download/LinkRemote-android-arm64.apk" },
+          { label: "产品介绍", href: "/remote/" },
+          { label: "账号与设备", href: "/remote/manage" },
+        ],
+      },
+      // {
+      //   icon: "🧩",
+      //   title: "下一个应用",
+      //   sub: "敬请期待",
+      //   badges: ["安卓"],
+      //   desc: "应用简介……",
+      //   links: [
+      //     { label: "⬇ 下载 APK", href: "/download/xxx.apk", primary: true },
+      //   ],
+      // },
+    ];
+
+    const grid = document.getElementById("appGrid");
+    if (apps.length === 0) {
+      grid.innerHTML = '<div class="empty-app">更多应用即将上线，敬请期待。</div>';
+    } else {
+      grid.innerHTML = apps.map((a) => `
+        <article class="app-card">
+          <div class="app-head">
+            <div class="app-icon">${a.icon}</div>
+            <div>
+              <div class="app-title">${a.title}</div>
+              <div class="app-sub">${a.sub}</div>
+              <div class="badges">${a.badges.map((b) => `<span class="badge">${b}</span>`).join("")}</div>
+            </div>
+          </div>
+          <p class="app-desc">${a.desc}</p>
+          <div class="links">
+            ${a.links.map((l) => `
+              <a class="btn ${l.primary ? "primary" : "ghost"}" href="${l.href}" ${l.href.startsWith("http") ? 'target="_blank" rel="noopener"' : ""}>${l.label}</a>
+            `).join("")}
+          </div>
+        </article>
+      `).join("");
+    }
+  </script>
+</body>
+</html>

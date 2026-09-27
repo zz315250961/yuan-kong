@@ -7259,7 +7259,7 @@ dependencies = [
 
 [[package]]
 name = "linkremote"
-version = "1.0.36"
+version = "1.0.37"
 dependencies = [
  "android-wakelock",
  "android_logger",
