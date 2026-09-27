@@ -35,7 +35,6 @@ jobs:
         run: |
           cargo install cargo-expand --version 1.0.95 --locked
           cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
-          sed -i '' 's/extended_text: 14.0.0/extended_text: 13.0.0/g' flutter/pubspec.yaml
           (cd flutter && flutter pub get)
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
