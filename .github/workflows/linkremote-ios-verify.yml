@@ -28,6 +28,7 @@ jobs:
         with:
           toolchain: '1.75'
           targets: aarch64-apple-ios
+          components: rustfmt
 
       - name: Generate Flutter-Rust bridge
         shell: bash
@@ -39,7 +40,8 @@ jobs:
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart \
-            --c-output ./flutter/macos/Runner/bridge_generated.h
+            --c-output ./flutter/macos/Runner/bridge_generated.h \
+            --class-name Rustdesk
           cp flutter/macos/Runner/bridge_generated.h flutter/ios/Runner/bridge_generated.h
 
       - name: Install iOS native libraries
