@@ -51,6 +51,10 @@ jobs:
           vcpkgGitCommitId: 120deac3062162151622ca4860575a33844ba10b
           doNotCache: false
 
+      - name: Install native build tools
+        shell: bash
+        run: brew install nasm pkg-config
+
       - name: Build native dependencies for iOS
         shell: bash
         run: |
