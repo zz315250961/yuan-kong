@@ -41,7 +41,7 @@ import time
 from email.message import EmailMessage
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -249,6 +249,12 @@ def is_valid_email(email: str) -> bool:
     return bool(EMAIL_RE.fullmatch(email.strip()))
 
 
+def body_text(body: dict, key: str) -> str:
+    """Malformed JSON values must fail validation rather than crash a handler."""
+    value = body.get(key)
+    return value if isinstance(value, str) else ""
+
+
 def user_to_payload(row: sqlite3.Row) -> dict:
     email = row["email"]
     return {
@@ -309,7 +315,7 @@ def purpose_label(purpose: str) -> str:
     }.get(purpose, purpose)
 
 
-def send_verification_email(email: str, code: str, purpose: str) -> None:
+def send_verification_email(email: str, code: str, purpose: str) -> bool:
     """发送验证码邮件；未配置 SMTP 时打印到 stdout（PM2 日志）供联调。"""
     if not SMTP_CONFIG:
         print(
@@ -317,7 +323,7 @@ def send_verification_email(email: str, code: str, purpose: str) -> None:
             f"code={code} (SMTP 未配置，此码已打印到日志)",
             flush=True,
         )
-        return
+        return True
     label = purpose_label(purpose)
     ttl_minutes = CODE_TTL_SECONDS // 60
     msg = EmailMessage()
@@ -359,11 +365,13 @@ def send_verification_email(email: str, code: str, purpose: str) -> None:
                 server.login(user, password)
             server.send_message(msg)
         print(f"[SMTP] 验证码已发送至 {email}", flush=True)
+        return True
     except Exception as e:
         print(
-            f"[SMTP] 发送失败（改用日志联调）email={email} err={e} code={code}",
+            f"[SMTP] 发送失败 email={email} err={e}",
             flush=True,
         )
+        return False
 
 
 def verify_code(email: str, code: str, purpose: str) -> tuple[bool, str]:
@@ -564,7 +572,7 @@ class Handler(BaseHTTPRequestHandler):
                 """
                 SELECT u.* FROM tokens t
                 JOIN users u ON u.id = t.user_id
-                WHERE t.token = ? AND t.expires_at > ?
+                WHERE t.token = ? AND t.expires_at > ? AND u.status = 1
                 """,
                 (token, now_iso()),
             ).fetchone()
@@ -586,8 +594,8 @@ class Handler(BaseHTTPRequestHandler):
         if rate_limited("send-code:" + self._client_key()):
             return self._error(429, "操作过于频繁，请稍后再试")
         body = self._read_body()
-        email = (body.get("email") or "").strip().lower()
-        purpose = (body.get("purpose") or "").strip()
+        email = body_text(body, "email").strip().lower()
+        purpose = body_text(body, "purpose").strip()
         if not is_valid_email(email):
             return self._error(400, "请输入正确的邮箱地址")
         if purpose not in VALID_PURPOSES:
@@ -606,6 +614,12 @@ class Handler(BaseHTTPRequestHandler):
                 ).fetchone()
                 if exists is None:
                     return self._error(400, "该邮箱未注册")
+            elif purpose == "change_email":
+                exists = conn.execute(
+                    "SELECT id FROM users WHERE email = ?", (email,)
+                ).fetchone()
+                if exists:
+                    return self._error(400, "该邮箱已被账号使用，请填写其他邮箱")
 
             # 60 秒重发冷却
             last = conn.execute(
@@ -653,16 +667,23 @@ class Handler(BaseHTTPRequestHandler):
             )
             conn.commit()
 
-        send_verification_email(email, code, purpose)
+        if not send_verification_email(email, code, purpose):
+            # A delivery failure must not claim success or start a resend cooldown.
+            with db_connect() as conn:
+                conn.execute(
+                    "DELETE FROM verification_codes WHERE email = ? AND purpose = ? AND code = ?",
+                    (email, purpose, code),
+                )
+            return self._error(503, "验证码邮件发送失败，请稍后重新发送")
         self._send_json({"ok": True, "message": "验证码已发送"})
 
     def handle_register(self, web_session=False):
         if rate_limited("register:" + self._client_key()):
             return self._error(429, "操作过于频繁，请稍后再试")
         body = self._read_body()
-        email = (body.get("username") or "").strip().lower()
-        password = body.get("password") or ""
-        code = (body.get("code") or "").strip()
+        email = body_text(body, "username").strip().lower()
+        password = body_text(body, "password")
+        code = body_text(body, "code").strip()
         if not is_valid_email(email):
             return self._error(400, "请输入正确的邮箱地址")
         if len(password) < 4:
@@ -705,9 +726,9 @@ class Handler(BaseHTTPRequestHandler):
         if rate_limited("reset:" + self._client_key()):
             return self._error(429, "操作过于频繁，请稍后再试")
         body = self._read_body()
-        email = (body.get("email") or "").strip().lower()
-        code = (body.get("code") or "").strip()
-        password = body.get("password") or ""
+        email = body_text(body, "email").strip().lower()
+        code = body_text(body, "code").strip()
+        password = body_text(body, "password")
         if not is_valid_email(email):
             return self._error(400, "请输入正确的邮箱地址")
         if len(password) < 4:
@@ -738,9 +759,9 @@ class Handler(BaseHTTPRequestHandler):
         if user is None:
             return self._error(401, "登录已失效，请重新登录")
         body = self._read_body()
-        new_email = (body.get("new_email") or "").strip().lower()
-        code = (body.get("code") or "").strip()
-        password = body.get("password") or ""
+        new_email = body_text(body, "new_email").strip().lower()
+        code = body_text(body, "code").strip()
+        password = body_text(body, "password")
         if not is_valid_email(new_email):
             return self._error(400, "请输入正确的邮箱地址")
         if not password:
@@ -771,8 +792,8 @@ class Handler(BaseHTTPRequestHandler):
         if rate_limited("login:" + self._client_key()):
             return self._error(429, "操作过于频繁，请稍后再试")
         body = self._read_body()
-        email = (body.get("username") or "").strip().lower()
-        password = body.get("password") or ""
+        email = body_text(body, "username").strip().lower()
+        password = body_text(body, "password")
         if not email or not password:
             return self._error(400, "请输入邮箱和密码")
         with db_connect() as conn:
@@ -961,7 +982,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/peers" and method == "GET":
             return self.handle_peers()
         if path.startswith("/api/peers/") and method == "DELETE":
-            return self.handle_delete_device(path.rsplit("/", 1)[-1])
+            return self.handle_delete_device(unquote(path.rsplit("/", 1)[-1]))
 
         # 地址簿（兼容客户端契约）
         if path == "/api/ab" or path.startswith("/api/ab/"):

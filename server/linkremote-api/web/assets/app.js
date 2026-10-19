@@ -4,37 +4,65 @@ const deviceList = document.querySelector('#device-list');
 const deviceCount = document.querySelector('#device-count');
 const deviceSearch = document.querySelector('#device-search');
 let allDevices = [];
+let deviceRequest = 0;
+let hasLoadedDevices = false;
+let accountEmail = '';
+let announcementTimer;
 
 function announce(message = '', isError = false) {
+  window.clearTimeout(announcementTimer);
   statusRegion.textContent = message;
   statusRegion.classList.toggle('error', isError);
+  if (message && !isError) announcementTimer = window.setTimeout(() => { statusRegion.textContent = ''; }, 5000);
 }
 
-function showView(name) {
+function showView(name, focus = true) {
   for (const view of views) view.hidden = view.dataset.view !== name;
+  document.querySelectorAll('[data-dashboard-section]').forEach(button => {
+    button.disabled = name !== 'dashboard';
+  });
+  document.querySelector('.mobile-nav').hidden = name !== 'dashboard';
+  if (name === 'reset' && accountEmail) {
+    document.querySelector('#reset-form').elements.email.value = accountEmail;
+  }
+  if (focus) document.querySelector(`[data-view="${name}"] h1`)?.focus({preventScroll: true});
   announce();
 }
 
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: 'same-origin',
-    headers: {'Content-Type': 'application/json', ...(options.headers || {})},
-    ...options,
-  });
-  const body = await response.json().catch(() => ({}));
-  if (response.status === 401) {
-    showView('login');
-    throw new Error('登录已失效，请重新登录');
+async function request(path, options = {}, redirectUnauthorized = true) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(path, {
+      ...options,
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', ...(options.headers || {})},
+      signal: controller.signal,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401 && redirectUnauthorized && path !== '/remote/api/web/login') showView('login');
+    if (!response.ok || body.error) {
+      const error = new Error(body.error || `请求失败 (${response.status})，请重试`);
+      error.status = response.status;
+      throw error;
+    }
+    return body;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('请求超时，请检查网络后重试');
+    if (error instanceof TypeError) throw new Error('无法连接服务器，请检查网络后重试');
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  if (!response.ok || body.error) {
-    throw new Error(body.error || `请求失败 (${response.status})`);
-  }
-  return body;
 }
 
 async function submitJson(form, path, onSuccess) {
   const submit = form.querySelector('[type="submit"]');
+  if (submit.disabled) return;
+  const label = submit.textContent;
   submit.disabled = true;
+  submit.textContent = '正在提交…';
+  form.setAttribute('aria-busy', 'true');
   try {
     const body = Object.fromEntries(new FormData(form).entries());
     const result = await request(path, {method: 'POST', body: JSON.stringify(body)});
@@ -44,6 +72,8 @@ async function submitJson(form, path, onSuccess) {
     announce(error.message, true);
   } finally {
     submit.disabled = false;
+    submit.textContent = label;
+    form.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -63,7 +93,7 @@ function actionButton(label, action, className = '') {
   element.type = 'button';
   element.textContent = label;
   element.className = `table-action ${className}`.trim();
-  element.addEventListener('click', action);
+  element.addEventListener('click', () => action(element));
   return element;
 }
 
@@ -83,7 +113,15 @@ function renderDevice(device) {
   name.className = 'device-name';
   const icon = document.createElement('span');
   icon.className = 'device-type';
-  icon.textContent = String(info.os || '').toLowerCase().includes('android') ? '▯' : '▣';
+  icon.setAttribute('aria-hidden', 'true');
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  const shape = document.createElementNS(svg.namespaceURI, 'path');
+  shape.setAttribute('d', String(info.os || '').toLowerCase().includes('android')
+    ? 'M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 15h4'
+    : 'M3 4h18v13H3V4Zm5 17h8m-4-4v4');
+  svg.append(shape);
+  icon.append(svg);
   name.append(icon, document.createTextNode(info.device_name || device.id || '未命名设备'));
 
   const status = document.createElement('span');
@@ -100,14 +138,19 @@ function renderDevice(device) {
         announce('复制失败，请手动选择设备 ID', true);
       }
     }),
-    actionButton('移除', async () => {
-      if (!window.confirm('仅从当前账号中移除此设备？客户端本身不会被卸载。')) return;
+    actionButton('移除', async button => {
+      if (!window.confirm('从当前账号的设备列表移除此记录？客户端再次登录或同步账号时，设备可能重新出现。')) return;
+      button.disabled = true;
       try {
         await request(`/remote/api/peers/${encodeURIComponent(device.uuid)}`, {method: 'DELETE'});
-        announce('设备已从账号中移除');
+        allDevices = allDevices.filter(item => item.uuid !== device.uuid);
+        renderDevices();
+        announce('设备记录已移除');
         await loadDevices();
       } catch (error) {
         announce(error.message, true);
+      } finally {
+        button.disabled = false;
       }
     }, 'remove'),
   );
@@ -117,7 +160,7 @@ function renderDevice(device) {
     tableCell('系统', info.os || '未知'),
     tableCell('设备 ID', device.id || '—', 'device-id'),
     tableCell('状态', status),
-    tableCell('最后在线', formatDate(device.last_login)),
+    tableCell('最近登录', formatDate(device.last_login)),
     tableCell('操作', actions),
   );
   return row;
@@ -149,19 +192,50 @@ function renderDevices() {
 }
 
 async function loadDevices() {
+  const requestId = ++deviceRequest;
+  const refresh = document.querySelector('#refresh-devices');
+  refresh.disabled = true;
+  refresh.textContent = '刷新中…';
   deviceList.setAttribute('aria-busy', 'true');
+  if (!hasLoadedDevices) showDeviceMessage('正在加载设备…');
   try {
     const result = await request('/remote/api/peers');
+    if (requestId !== deviceRequest) return;
     allDevices = Array.isArray(result.data) ? result.data : [];
+    hasLoadedDevices = true;
     renderDevices();
+  } catch (error) {
+    if (requestId === deviceRequest && !hasLoadedDevices) showDeviceMessage('设备加载失败，请点击“刷新”重试。');
+    throw error;
   } finally {
-    deviceList.setAttribute('aria-busy', 'false');
+    if (requestId === deviceRequest) {
+      deviceList.setAttribute('aria-busy', 'false');
+      refresh.disabled = false;
+      refresh.textContent = '刷新';
+    }
   }
 }
 
-async function loadDashboard() {
-  const user = await request('/remote/api/currentUser', {method: 'POST', body: '{}'});
+function showDeviceMessage(message) {
+  const row = document.createElement('tr');
+  row.className = 'empty-row';
+  const cell = document.createElement('td');
+  cell.colSpan = 6;
+  cell.textContent = message;
+  row.append(cell);
+  deviceList.replaceChildren(row);
+  deviceCount.textContent = message.startsWith('正在') ? '正在加载…' : '暂时无法获取设备数量';
+}
+
+async function loadDashboard({initial = false} = {}) {
+  const user = await request('/remote/api/currentUser', {method: 'POST', body: '{}'}, !initial);
   const email = user.email || user.name || '—';
+  if (accountEmail !== email) {
+    allDevices = [];
+    hasLoadedDevices = false;
+    deviceSearch.value = '';
+  }
+  accountEmail = email;
   document.querySelector('#account-email').textContent = email;
   document.querySelector('#user-menu').textContent = email.split('@')[0] || '账号';
   showView('dashboard');
@@ -173,9 +247,7 @@ async function sendCode(buttonElement) {
   const form = buttonElement.closest('form');
   const field = purpose === 'change_email' ? 'new_email' : (purpose === 'reset' ? 'email' : 'username');
   const email = form.elements[field].value.trim();
-  if (!email) {
-    announce('请先填写邮箱', true);
-    form.elements[field].focus();
+  if (!form.elements[field].reportValidity()) {
     return;
   }
   buttonElement.disabled = true;
@@ -219,8 +291,15 @@ document.querySelectorAll('[data-toggle-email]').forEach(element => {
 });
 document.querySelectorAll('[data-dashboard-section]').forEach(element => {
   element.addEventListener('click', () => {
-    document.querySelectorAll('[data-dashboard-section]').forEach(item => item.classList.toggle('active', item === element));
-    document.querySelector(`#${element.dataset.dashboardSection}-section`)?.scrollIntoView({behavior: 'smooth'});
+    document.querySelectorAll('[data-dashboard-section]').forEach(item => {
+      const selected = item.dataset.dashboardSection === element.dataset.dashboardSection;
+      item.classList.toggle('active', selected);
+      if (selected) item.setAttribute('aria-current', 'location');
+      else item.removeAttribute('aria-current');
+    });
+    document.querySelector(`#${element.dataset.dashboardSection}-section`)?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
   });
 });
 
@@ -241,8 +320,9 @@ document.querySelector('#reset-form').addEventListener('submit', event => {
 });
 document.querySelector('#change-email-form').addEventListener('submit', event => {
   event.preventDefault();
-  return submitJson(event.currentTarget, '/remote/api/change-email', async () => {
-    event.currentTarget.hidden = true;
+  const form = event.currentTarget;
+  return submitJson(form, '/remote/api/change-email', async () => {
+    form.hidden = true;
     await loadDashboard();
     announce('绑定邮箱已更新');
   });
@@ -254,6 +334,11 @@ document.querySelector('#refresh-devices').addEventListener('click', async () =>
 document.querySelector('#logout-button').addEventListener('click', async () => {
   try {
     await request('/remote/api/web/logout', {method: 'POST', body: '{}'});
+    accountEmail = '';
+    allDevices = [];
+    hasLoadedDevices = false;
+    deviceSearch.value = '';
+    document.querySelectorAll('form').forEach(form => form.reset());
     showView('login');
     announce('已安全退出');
   } catch (error) {
@@ -262,7 +347,7 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
 });
 deviceSearch.addEventListener('input', renderDevices);
 
-loadDashboard().catch(error => {
-  showView('login');
-  announce(error.message, true);
+loadDashboard({initial: true}).catch(error => {
+  showView('login', false);
+  if (error.status !== 401) announce(error.message, true);
 });

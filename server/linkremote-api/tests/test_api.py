@@ -6,6 +6,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
+from urllib.parse import quote
 
 API_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(API_DIR))
@@ -303,6 +305,104 @@ class ApiTestCase(unittest.TestCase):
             self.assertIn(endpoint, js)
         self.assertNotIn("localStorage", js)
         self.assertNotIn("sessionStorage", js)
+
+    def test_password_reset_invalidates_every_session_and_accepts_new_password(self):
+        old_token, user_id = self.seed_session("owner@example.test")
+        with app.db_connect() as conn:
+            second_token = app.create_session(conn, user_id)
+        self.seed_verification_code("owner@example.test", "123456", "reset")
+        status, _, _ = self.request("POST", "/api/reset-password", {
+            "email": "owner@example.test", "code": "123456", "password": "new-secret",
+        })
+        self.assertEqual(status, 200)
+        for token in (old_token, second_token):
+            status, _, _ = self.request("GET", "/api/peers", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(status, 401)
+        for password, expected in (("secret1", 401), ("new-secret", 200)):
+            status, _, _ = self.request("POST", "/api/login", {
+                "username": "owner@example.test", "password": password,
+            })
+            self.assertEqual(status, expected)
+        status, _, _ = self.request("POST", "/api/reset-password", {
+            "email": "owner@example.test", "code": "123456", "password": "another-secret",
+        })
+        self.assertEqual(status, 400, "A consumed verification code must not work twice")
+
+    def test_change_email_requires_password_and_preserves_session(self):
+        token, _ = self.seed_session("owner@example.test")
+        self.seed_verification_code("new@example.test", "123456", "change_email")
+        body = {"new_email": "new@example.test", "code": "123456", "password": "wrong"}
+        auth = {"Authorization": f"Bearer {token}"}
+        status, _, _ = self.request("POST", "/api/change-email", body, auth)
+        self.assertEqual(status, 400)
+        body["password"] = "secret1"
+        status, _, raw = self.request("POST", "/api/change-email", body, auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw)["user"]["email"], "new@example.test")
+        status, _, raw = self.request("POST", "/api/currentUser", {}, auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw)["email"], "new@example.test")
+
+    def test_failed_email_delivery_is_reported_and_does_not_block_retry(self):
+        body = {"email": "new@example.test", "purpose": "register"}
+        with patch.object(app, "send_verification_email", return_value=False):
+            status, _, raw = self.request("POST", "/api/send-code", body)
+        self.assertEqual(status, 503)
+        self.assertIn("发送失败", json.loads(raw)["error"])
+        with app.db_connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM verification_codes").fetchone()[0], 0)
+        with patch.object(app, "send_verification_email", return_value=True):
+            status, _, _ = self.request("POST", "/api/send-code", body)
+        self.assertEqual(status, 200)
+        status, _, _ = self.request("POST", "/api/send-code", body)
+        self.assertEqual(status, 429)
+
+    def test_code_attempt_limit_and_expiry_are_enforced(self):
+        self.seed_verification_code("new@example.test", "123456", "register")
+        body = {"username": "new@example.test", "password": "secret1", "code": "000000"}
+        for _ in range(app.CODE_MAX_ATTEMPTS):
+            status, _, _ = self.request("POST", "/api/register", body)
+            self.assertEqual(status, 400)
+        body["code"] = "123456"
+        status, _, raw = self.request("POST", "/api/register", body)
+        self.assertEqual(status, 400)
+        self.assertIn("错误次数过多", json.loads(raw)["error"])
+        self.seed_verification_code("expired@example.test", "123456", "register")
+        with app.db_connect() as conn:
+            conn.execute("UPDATE verification_codes SET expires_at = ?", ("2020-01-01T00:00:00.000Z",))
+        body["username"] = "expired@example.test"
+        status, _, _ = self.request("POST", "/api/register", body)
+        self.assertEqual(status, 400)
+
+    def test_malformed_field_types_return_validation_errors(self):
+        token, _ = self.seed_session("owner@example.test")
+        auth = {"Authorization": f"Bearer {token}"}
+        cases = (
+            ("/api/login", {"username": ["owner@example.test"], "password": 1234}),
+            ("/api/register", {"username": "new@example.test", "password": {"value": "secret1"}}),
+            ("/api/send-code", {"email": 123, "purpose": ["register"]}),
+            ("/api/reset-password", {"email": {"value": "owner@example.test"}, "code": 123456}),
+            ("/api/change-email", {"new_email": ["new@example.test"], "password": "secret1"}),
+        )
+        for path, body in cases:
+            status, _, _ = self.request("POST", path, body, auth)
+            self.assertEqual(status, 400, path)
+
+    def test_device_deletion_decodes_url_identifier(self):
+        token, user_id = self.seed_session("owner@example.test")
+        self.seed_device(user_id, "123", "office/device + 1", "Windows", "Office")
+        auth = {"Authorization": f"Bearer {token}"}
+        status, _, _ = self.request("DELETE", "/api/peers/" + quote("office/device + 1", safe=""), headers=auth)
+        self.assertEqual(status, 200)
+        status, _, raw = self.request("GET", "/api/peers", headers=auth)
+        self.assertEqual(json.loads(raw)["data"], [])
+
+    def test_disabled_user_existing_session_is_rejected(self):
+        token, user_id = self.seed_session("owner@example.test")
+        with app.db_connect() as conn:
+            conn.execute("UPDATE users SET status = 0 WHERE id = ?", (user_id,))
+        status, _, _ = self.request("GET", "/api/peers", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(status, 401)
 
 
 if __name__ == "__main__":

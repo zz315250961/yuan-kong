@@ -7,10 +7,11 @@
   <meta name="theme-color" content="#f5f3ee">
   <title>设备与账号管理｜LinkRemote 远控</title>
   <link rel="icon" href="/remote/assets/app-icon.png">
-  <link rel="stylesheet" href="/remote/assets/app.css?v=20260927">
-  <script type="module" src="/remote/assets/app.js?v=20260927"></script>
+  <link rel="stylesheet" href="/remote/assets/app.css?v=20261019">
+  <script type="module" src="/remote/assets/app.js?v=20261019"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">跳转到主要内容</a>
   <div class="management-shell">
     <aside class="sidebar" aria-label="管理端导航">
       <a class="brand" href="/remote/" aria-label="LinkRemote 远控首页">
@@ -18,20 +19,24 @@
         <span><strong>LinkRemote</strong><small>远控</small></span>
       </a>
       <nav>
-        <button class="nav-item active" type="button" data-dashboard-section="devices"><span aria-hidden="true">▣</span>设备</button>
-        <button class="nav-item" type="button" data-dashboard-section="account"><span aria-hidden="true">♙</span>账号</button>
+        <button class="nav-item active" type="button" data-dashboard-section="devices" aria-current="location" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H3V4Zm5 17h8m-4-4v4"/></svg>设备</button>
+        <button class="nav-item" type="button" data-dashboard-section="account" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM4 21v-3a8 8 0 0 1 16 0v3"/></svg>账号</button>
       </nav>
       <div class="sidebar-footer">
-        <a href="/remote/"><span aria-hidden="true">◎</span>返回官网</a>
-        <a href="https://github.com/zz315250961/yuan-kong" rel="noreferrer"><span aria-hidden="true">▤</span>开源许可</a>
+        <a href="/remote/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v11h-7v-7h-4v7H3V10Z"/></svg>返回官网</a>
+        <a href="https://github.com/zz315250961/yuan-kong" rel="noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm4 5h6m-6 4h6m-6 4h4"/></svg>开源许可</a>
       </div>
     </aside>
 
-    <main class="management-content">
+    <main id="main-content" class="management-content" tabindex="-1">
       <header class="mobile-header">
         <a class="brand" href="/remote/"><img src="/remote/assets/app-icon.png" alt=""><strong>LinkRemote</strong></a>
         <a href="/remote/">返回官网</a>
       </header>
+      <nav class="mobile-nav" aria-label="管理端导航" hidden>
+        <button class="active" type="button" data-dashboard-section="devices" aria-current="location">我的设备</button>
+        <button type="button" data-dashboard-section="account">账号安全</button>
+      </nav>
 
       <section id="login-view" class="auth-view" data-view="login">
         <div class="auth-copy">
@@ -59,10 +64,10 @@
           <h2>注册 LinkRemote</h2>
           <label>邮箱<input name="username" type="email" autocomplete="email" required></label>
           <div class="code-row">
-            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" title="请输入邮件中的 6 位数字验证码" required></label>
             <button type="button" data-send-code="register">发送验证码</button>
           </div>
-          <label>设置密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
+          <label>设置密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" aria-describedby="register-password-hint" required><small id="register-password-hint" class="field-hint">4–64 位，建议使用较长且不重复的密码。</small></label>
           <button class="primary" type="submit">注册并登录</button>
           <button class="quiet" type="button" data-show-view="login">返回登录</button>
         </form>
@@ -77,7 +82,7 @@
           <h2>找回账号</h2>
           <label>邮箱<input name="email" type="email" autocomplete="email" required></label>
           <div class="code-row">
-            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" title="请输入邮件中的 6 位数字验证码" required></label>
             <button type="button" data-send-code="reset">发送验证码</button>
           </div>
           <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="4" maxlength="64" required></label>
@@ -91,15 +96,15 @@
           <div class="dashboard-heading">
             <div><h1 tabindex="-1">我的设备</h1><p>查看账号下已绑定的 Windows 与 Android 设备</p></div>
             <div class="heading-actions">
-              <label class="search-field"><span aria-hidden="true">⌕</span><input id="device-search" type="search" placeholder="搜索设备名称或 ID" autocomplete="off"></label>
+              <label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-2 5 6 6"/></svg><input id="device-search" type="search" aria-label="搜索设备名称、系统或 ID" placeholder="搜索设备名称或 ID" autocomplete="off"></label>
               <button type="button" id="refresh-devices">刷新</button>
-              <button class="user-menu" type="button" id="logout-button" title="退出登录"><span aria-hidden="true">♙</span><span id="user-menu">账号</span><span>退出</span></button>
+              <button class="user-menu" type="button" id="logout-button" title="退出登录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM4 21v-3a8 8 0 0 1 16 0v3"/></svg><span id="user-menu">账号</span><span>退出</span></button>
             </div>
           </div>
 
           <div class="table-wrap">
-            <table>
-              <thead><tr><th>设备</th><th>系统</th><th>设备 ID</th><th>状态</th><th>最后在线</th><th>操作</th></tr></thead>
+            <table aria-label="账号已绑定设备">
+              <thead><tr><th scope="col">设备</th><th scope="col">系统</th><th scope="col">设备 ID</th><th scope="col">状态</th><th scope="col">最近登录</th><th scope="col">操作</th></tr></thead>
               <tbody id="device-list" aria-live="polite"></tbody>
             </table>
           </div>
@@ -116,7 +121,7 @@
             <h3>修改绑定邮箱</h3>
             <label>新邮箱<input name="new_email" type="email" autocomplete="email" required></label>
             <div class="code-row">
-              <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+              <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" title="请输入邮件中的 6 位数字验证码" required></label>
               <button type="button" data-send-code="change_email">发送验证码</button>
             </div>
             <label>当前密码<input name="password" type="password" autocomplete="current-password" required></label>
@@ -128,6 +133,6 @@
       </section>
     </main>
   </div>
-  <div id="live-status" class="live-status" aria-live="polite"></div>
+  <div id="live-status" class="live-status" role="status" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>
