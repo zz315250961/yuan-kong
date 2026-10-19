@@ -81,9 +81,12 @@ jobs:
           path: ${{ runner.temp }}/linkremote-vcpkg-binaries
           # Immutable per-attempt snapshots let a retry add packages to a
           # partial native build without replacing an earlier cache entry.
+          # The final fallback shares only this SDK/baseline/target's package
+          # store; vcpkg still checks each port ABI and rebuilds changed ports.
           key: linkremote-ios-native-${{ runner.os }}-${{ runner.arch }}-xcode16.4-sdk18.5-vcpkg120deac3062162151622ca4860575a33844ba10b-${{ matrix.mode }}-${{ matrix.mode == 'device' && 'arm64-ios-x64-osx' || 'x64-ios-x64-osx' }}-${{ hashFiles('vcpkg.json', 'res/vcpkg/**', 'res/vcpkg-triplets/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             linkremote-ios-native-${{ runner.os }}-${{ runner.arch }}-xcode16.4-sdk18.5-vcpkg120deac3062162151622ca4860575a33844ba10b-${{ matrix.mode }}-${{ matrix.mode == 'device' && 'arm64-ios-x64-osx' || 'x64-ios-x64-osx' }}-${{ hashFiles('vcpkg.json', 'res/vcpkg/**', 'res/vcpkg-triplets/**') }}-
+            linkremote-ios-native-${{ runner.os }}-${{ runner.arch }}-xcode16.4-sdk18.5-vcpkg120deac3062162151622ca4860575a33844ba10b-${{ matrix.mode }}-${{ matrix.mode == 'device' && 'arm64-ios-x64-osx' || 'x64-ios-x64-osx' }}-
 
       - name: Install iOS native libraries
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
@@ -152,6 +155,25 @@ jobs:
             aom:x64-ios libjpeg-turbo:x64-ios opus:x64-ios libvpx:x64-ios libyuv:x64-ios \
             aom:x64-osx libjpeg-turbo:x64-osx opus:x64-osx libvpx:x64-osx libyuv:x64-osx \
             --overlay-ports="$PWD/res/vcpkg" --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Verify simulator AOM assembly object format before Rust LTO
+        if: matrix.mode == 'simulator'
+        shell: bash
+        run: |
+          python3 - "$VCPKG_ROOT/installed/x64-ios/lib/libaom.a" <<'PY'
+          import struct
+          import subprocess
+          import sys
+
+          member = "intrapred_asm_sse2.asm.o"
+          data = subprocess.check_output(["xcrun", "ar", "-p", sys.argv[1], member])
+          if len(data) < 32 or data[:4] != b"\xcf\xfa\xed\xfe":
+              raise SystemExit(f"FAIL: {member} must be Mach-O 64-bit, not ELF or another format")
+          cpu, _, file_type = struct.unpack_from("<III", data, 4)
+          if cpu != 0x01000007 or file_type != 1:
+              raise SystemExit(f"FAIL: {member} must be an x86_64 Mach-O object")
+          print(f"PASS: {member} is an x86_64 Mach-O object; SIMD remains enabled")
+          PY
 
       - name: Build unsigned Simulator controller
         if: matrix.mode == 'simulator'

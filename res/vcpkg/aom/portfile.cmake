@@ -8,12 +8,19 @@ vcpkg_find_acquire_program(PERL)
 get_filename_component(PERL_PATH ${PERL} DIRECTORY)
 vcpkg_add_to_path(${PERL_PATH})
 
+set(aom_simulator_patches "")
+if(VCPKG_TARGET_IS_IOS AND VCPKG_TARGET_ARCHITECTURE STREQUAL "x64" AND TARGET_TRIPLET STREQUAL "x64-ios")
+    # AOM recognizes only Darwin as Mach-O, but CMake names this SDK iOS.
+    list(APPEND aom_simulator_patches aom-ios-simulator-macho.diff)
+endif()
+
 if(DEFINED ENV{USE_AOM_391})
     vcpkg_from_git(
         OUT_SOURCE_PATH SOURCE_PATH
         URL "https://aomedia.googlesource.com/aom"
         REF 8ad484f8a18ed1853c094e7d3a4e023b2a92df28 # 3.9.1
         PATCHES
+            ${aom_simulator_patches}
             aom-uninitialized-pointer.diff
             aom-avx2.diff
             aom-install.diff
@@ -24,6 +31,7 @@ else()
         URL "https://aomedia.googlesource.com/aom"
         REF 10aece4157eb79315da205f39e19bf6ab3ee30d0 # 3.12.1
         PATCHES
+            ${aom_simulator_patches}
             aom-uninitialized-pointer.diff
             # aom-avx2.diff
             # Can be dropped when https://bugs.chromium.org/p/aomedia/issues/detail?id=3029 is merged into the upstream
