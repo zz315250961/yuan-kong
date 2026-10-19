@@ -474,56 +474,46 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   GestureTapDownCallback? onDoubleFinerTap;
   GestureTapCancelCallback? onDoubleFinerTapCancel;
 
-  Timer? _firstTapTimer;
-  _TapTracker? _firstTap;
-
-  PointerDownEvent? _lastPointerDownEvent;
-
-  var _isStart = false;
-
-  final Set<int> _upTap = {};
-
+  Timer? _tapTimer;
+  PointerDownEvent? _firstDown;
+  final Set<int> _upPointers = {};
+  final Set<int> _heldPointers = {};
   final Map<int, _TapTracker> _trackers = <int, _TapTracker>{};
 
   @override
   bool isPointerAllowed(PointerDownEvent event) {
-    if (_firstTap == null) {
-      switch (event.buttons) {
-        case kPrimaryButton:
-          if (onDoubleFinerTapDown == null &&
-              onDoubleFinerTap == null &&
-              onDoubleFinerTapCancel == null) {
-            return false;
-          }
-          break;
-        default:
-          return false;
-      }
-    }
-    return super.isPointerAllowed(event);
+    return event.kind == PointerDeviceKind.touch &&
+        event.buttons == kPrimaryButton &&
+        (onDoubleFinerTapDown != null ||
+            onDoubleFinerTap != null ||
+            onDoubleFinerTapCancel != null) &&
+        super.isPointerAllowed(event);
   }
 
   @override
   void addAllowedPointer(PointerDownEvent event) {
-    debugPrint("addAllowedPointer");
-    if (_isStart) {
-      // second
+    // Both fingers must overlap. A third finger or a new down after an up
+    // belongs to a different gesture, never to this tap.
+    if (_trackers.length >= 2 || _upPointers.isNotEmpty) {
+      _reset();
+      return;
+    }
+    if (_trackers.isEmpty) {
+      _firstDown = event;
+      _tapTimer = Timer(kDoubleTapTimeout, _reset);
+    }
+    _trackTap(event);
+    if (_trackers.length == 2) {
+      for (final pointer in _trackers.keys) {
+        GestureBinding.instance.gestureArena.hold(pointer);
+        _heldPointers.add(pointer);
+      }
       if (onDoubleFinerTapDown != null) {
-        final TapDownDetails details = TapDownDetails(
-          globalPosition: event.position,
-          localPosition: event.localPosition,
-          kind: getKindForPointer(event.pointer),
-        );
+        final details = _tapDetails();
         invokeCallback<void>(
             'onDoubleFinerTapDown', () => onDoubleFinerTapDown!(details));
       }
-    } else {
-      // first tap
-      _isStart = true;
-      _lastPointerDownEvent = event;
-      _startFirstTapDownTimer();
     }
-    _trackTap(event);
   }
 
   void _trackTap(PointerDownEvent event) {
@@ -534,23 +524,33 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
       gestureSettings: gestureSettings,
     );
     _trackers[event.pointer] = tracker;
-    // debugPrint("_trackers:$_trackers");
     tracker.startTrackingPointer(_handleEvent, event.transform);
-
-    _registerTap(tracker);
   }
 
   void _handleEvent(PointerEvent event) {
-    final _TapTracker tracker = _trackers[event.pointer]!;
+    final tracker = _trackers[event.pointer];
+    if (tracker == null) return;
     if (event is PointerUpEvent) {
-      debugPrint("PointerUpEvent");
-      _upTap.add(tracker.pointer);
+      _upPointers.add(tracker.pointer);
+      tracker.stopTrackingPointer(_handleEvent);
+      if (_trackers.length == 1) {
+        _reset();
+      } else if (_upPointers.length == 2) {
+        _resolve();
+      } else {
+        // Claim the completed two-finger chord before another recognizer
+        // releases the shared arena hold while the second finger is lifting.
+        for (final candidate in _trackers.values.toList()) {
+          candidate.entry.resolve(GestureDisposition.accepted);
+        }
+      }
     } else if (event is PointerMoveEvent) {
-      if (!tracker.isWithinGlobalTolerance(event, kDoubleTapTouchSlop)) {
-        _reject(tracker);
+      if (!tracker.isWithinGlobalTolerance(
+          event, computeHitSlop(event.kind, gestureSettings))) {
+        _reset();
       }
     } else if (event is PointerCancelEvent) {
-      _reject(tracker);
+      _reset();
     }
   }
 
@@ -559,31 +559,7 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   @override
   void rejectGesture(int pointer) {
-    _TapTracker? tracker = _trackers[pointer];
-    // If tracker isn't in the list, check if this is the first tap tracker
-    if (tracker == null && _firstTap != null && _firstTap!.pointer == pointer) {
-      tracker = _firstTap;
-    }
-    // If tracker is still null, we rejected ourselves already
-    if (tracker != null) {
-      _reject(tracker);
-    }
-  }
-
-  void _reject(_TapTracker tracker) {
-    _trackers.remove(tracker.pointer);
-    tracker.entry.resolve(GestureDisposition.rejected);
-    _freezeTracker(tracker);
-    if (_firstTap != null) {
-      if (tracker == _firstTap) {
-        _reset();
-      } else {
-        _checkCancel();
-        if (_trackers.isEmpty) {
-          _reset();
-        }
-      }
-    }
+    if (_trackers.containsKey(pointer)) _reset();
   }
 
   @override
@@ -593,68 +569,49 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _reset() {
-    _stopFirstTapUpTimer();
-    _firstTap = null;
-    _clearTrackers();
-  }
-
-  void _registerTap(_TapTracker tracker) {
-    GestureBinding.instance.gestureArena.hold(tracker.pointer);
-    // Note, order is important below in order for the clear -> reject logic to
-    // work properly.
-  }
-
-  void _clearTrackers() {
-    _trackers.values.toList().forEach(_reject);
-    assert(_trackers.isEmpty);
-  }
-
-  void _freezeTracker(_TapTracker tracker) {
-    tracker.stopTrackingPointer(_handleEvent);
-  }
-
-  void _startFirstTapDownTimer() {
-    _firstTapTimer ??= Timer(kDoubleTapTimeout, _timeoutCheck);
-  }
-
-  void _stopFirstTapUpTimer() {
-    if (_firstTapTimer != null) {
-      _firstTapTimer!.cancel();
-      _firstTapTimer = null;
+    final notifyCancel = _trackers.length == 2;
+    _finish(GestureDisposition.rejected);
+    if (notifyCancel && onDoubleFinerTapCancel != null) {
+      invokeCallback<void>('onDoubleFinerTapCancel', onDoubleFinerTapCancel!);
     }
-  }
-
-  void _timeoutCheck() {
-    _isStart = false;
-    if (_upTap.length == 2) {
-      _resolve();
-    } else {
-      _reset();
-    }
-    _upTap.clear();
   }
 
   void _resolve() {
-    // TODO tap down details
+    final details = _tapDetails();
+    _finish(GestureDisposition.accepted);
     if (onDoubleFinerTap != null) {
-      onDoubleFinerTap!(TapDownDetails(
-        kind: _lastPointerDownEvent?.kind,
-      ));
+      invokeCallback<void>(
+          'onDoubleFinerTap', () => onDoubleFinerTap!(details));
     }
-    _trackers.forEach((key, value) {
-      value.entry.resolve(GestureDisposition.accepted);
-    });
-    _reset();
   }
 
-  void _checkCancel() {
-    if (onDoubleFinerTapCancel != null) {
-      invokeCallback<void>('onHoldDragCancel', onDoubleFinerTapCancel!);
+  TapDownDetails _tapDetails() => TapDownDetails(
+        globalPosition: _firstDown!.position,
+        localPosition: _firstDown!.localPosition,
+        kind: _firstDown!.kind,
+      );
+
+  void _finish(GestureDisposition disposition) {
+    _tapTimer?.cancel();
+    _tapTimer = null;
+    final trackers = _trackers.values.toList();
+    final heldPointers = _heldPointers.toSet();
+    // Arena resolution can synchronously call rejectGesture; clear first.
+    _trackers.clear();
+    _upPointers.clear();
+    _heldPointers.clear();
+    _firstDown = null;
+    for (final tracker in trackers) {
+      tracker.stopTrackingPointer(_handleEvent);
+      tracker.entry.resolve(disposition);
+      if (heldPointers.contains(tracker.pointer)) {
+        GestureBinding.instance.gestureArena.release(tracker.pointer);
+      }
     }
   }
 
   @override
-  String get debugDescription => 'double tap';
+  String get debugDescription => 'two-finger tap';
 }
 
 /// TapTracker helps track individual tap sequences as part of a

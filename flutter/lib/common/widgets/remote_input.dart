@@ -82,8 +82,9 @@ class RawTouchGestureDetectorRegion extends StatefulWidget {
 ///   onDoubleTapDown -> move to
 ///   onLongPressDown => move to
 ///
+/// touchMode and mouseMode:
+///   TwoFingerTap -> right click (touch mode first moves to the touch target)
 /// mouseMode only:
-///   DoubleFiner -> right click
 ///   HoldDrag -> left drag
 class _RawTouchGestureDetectorRegionState
     extends State<RawTouchGestureDetectorRegion> {
@@ -302,7 +303,6 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
     _doubleFinerTapPosition = d.localPosition;
-    // ignore for desktop and mobile
   }
 
   onDoubleFinerTap(TapDownDetails d) async {
@@ -311,14 +311,15 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
 
-    // mobile mouse mode or desktop touch screen
-    final isMobileMouseMode = isMobile && !ffiModel.touchMode;
-    // We can't use `d.localPosition` here because it's always (0, 0) on desktop.
-    final isDesktopInRemoteRect = (isDesktop || isWebDesktop) &&
-        ffi.cursorModel.isInRemoteRect(_doubleFinerTapPosition);
-    if (isMobileMouseMode || isDesktopInRemoteRect) {
-      await inputModel.tap(MouseButtons.right);
+    if (handleTouch) {
+      final isMoved = await ffi.cursorModel
+          .move(_doubleFinerTapPosition.dx, _doubleFinerTapPosition.dy);
+      if (!isMoved) return;
+    } else if (ffi.cursorModel
+        .shouldBlock(_doubleFinerTapPosition.dx, _doubleFinerTapPosition.dy)) {
+      return;
     }
+    await inputModel.tap(MouseButtons.right);
   }
 
   onHoldDragStart(DragStartDetails d) async {
