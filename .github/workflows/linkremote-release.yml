@@ -616,7 +616,7 @@ jobs:
         run: python -m py_compile server/linkremote-api/app.py server/linkremote-api/reset_password.py
 
       - name: Package Web management server
-        run: zip -r "LinkRemote-${VERSION}-web-management.zip" server/linkremote-api server/nginx server/README.md -x '*/data/*' '*/smtp.json' '*/__pycache__/*'
+        run: zip -r "LinkRemote-${VERSION}-web-management.zip" server/linkremote-api server/nginx server/README.md LICENCE NOTICE.md -x '*/data/*' '*/smtp.json' '*/__pycache__/*'
 
       - name: Upload Web management artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

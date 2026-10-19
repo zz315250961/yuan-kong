@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
+import 'package:flutter_hbb/common/widgets/linkremote_about.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
@@ -921,6 +922,18 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         SettingsSection(
           title: Text(translate("About")),
           tiles: [
+            SettingsTile(
+              title: Text(translate('About')),
+              description: Text('LinkRemote $version'),
+              leading: const Icon(Icons.info_outline),
+              trailing: const Icon(Icons.arrow_forward_ios),
+              onPressed: (context) => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => LinkRemoteAboutPage(version: version),
+                ),
+              ),
+            ),
             if (isAndroid)
               SettingsTile(
                   onPressed: (context) => onCopyFingerprint(_fingerprint),
@@ -1030,18 +1043,6 @@ void showThemeSettings(OverlayDialogManager dialogManager) async {
       ]),
     );
   }, backDismiss: true, clickMaskDismiss: true);
-}
-
-void showAbout(OverlayDialogManager dialogManager) {
-  dialogManager.show((setState, close, context) {
-    return CustomAlertDialog(
-      title: Text('关于 LinkRemote'),
-      content: Wrap(direction: Axis.vertical, spacing: 12, children: [
-        Text('版本：$version'),
-      ]),
-      actions: [],
-    );
-  }, clickMaskDismiss: true, backDismiss: true);
 }
 
 class _DisplayPage extends StatefulWidget {
