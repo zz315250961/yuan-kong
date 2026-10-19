@@ -9,6 +9,15 @@ import Flutter
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     dummyMethodToEnforceBundling();
+    #if targetEnvironment(simulator)
+    // CI waits for an actual Flutter frame, rather than accepting a launch PID
+    // while asynchronous Rust initialization might still be stuck.
+    if let controller = window?.rootViewController as? FlutterViewController {
+      controller.setFlutterViewDidRenderCallback {
+        NSLog("LINKREMOTE_SMOKE_FIRST_FRAME")
+      }
+    }
+    #endif
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
     

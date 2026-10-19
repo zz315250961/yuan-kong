@@ -376,11 +376,11 @@
 					/usr/lib/swift,
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)/",
 					"$(SDKROOT)/usr/lib/swift",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/release/",
+					"$(LINKREMOTE_RUST_LIBRARY_DIR)",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/release/liblibrustdesk.a",
+					"$(LINKREMOTE_RUST_LIBRARY_DIR)/liblibrustdesk.a",
 					"-ObjC",
 					"-l\"c++\"",
 					"-l\"sqlite3\"",
@@ -571,11 +571,11 @@
 					/usr/lib/swift,
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)/",
 					"$(SDKROOT)/usr/lib/swift",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/release/",
+					"$(LINKREMOTE_RUST_LIBRARY_DIR)",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/release/liblibrustdesk.a",
+					"$(LINKREMOTE_RUST_LIBRARY_DIR)/liblibrustdesk.a",
 					"-ObjC",
 					"-l\"c++\"",
 					"-l\"sqlite3\"",
@@ -658,11 +658,11 @@
 					/usr/lib/swift,
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)/",
 					"$(SDKROOT)/usr/lib/swift",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/release/",
+					"$(LINKREMOTE_RUST_LIBRARY_DIR)",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/release/liblibrustdesk.a",
+					"$(LINKREMOTE_RUST_LIBRARY_DIR)/liblibrustdesk.a",
 					"-ObjC",
 					"-l\"c++\"",
 					"-l\"sqlite3\"",

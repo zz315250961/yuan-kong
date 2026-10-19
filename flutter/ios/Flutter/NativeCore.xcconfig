@@ -1,0 +1,5 @@
+// Keep device and simulator cores separate: arm64 iPhoneOS objects cannot run
+// in a simulator, even when both machines use the same CPU architecture.
+LINKREMOTE_RUST_TARGET = aarch64-apple-ios
+LINKREMOTE_RUST_TARGET[sdk=iphonesimulator*] = x86_64-apple-ios
+LINKREMOTE_RUST_LIBRARY_DIR = $(PROJECT_DIR)/../../target/$(LINKREMOTE_RUST_TARGET)/release

@@ -39,6 +39,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
@@ -71,9 +73,9 @@
   <key>io.flutter.embedded_views_preview</key>
   <true/>
   <key>NSCameraUsageDescription</key>
-  <string>This app needs camera access to scan QR codes</string>
+  <string>LinkRemote uses the camera to scan a device connection QR code.</string>
   <key>NSPhotoLibraryUsageDescription</key>
-  <string>This app needs photo library access to get QR codes from image</string>
+  <string>LinkRemote reads a photo you select to find a device connection QR code.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>LinkRemote connects to your devices on the local network.</string>
 </dict>
