@@ -24,6 +24,7 @@ use std::{
 };
 
 use crate::common::SOFTWARE_UPDATE_URL;
+mod http_status;
 #[cfg(feature = "flutter")]
 use crate::hbbs_http::account;
 #[cfg(not(any(target_os = "ios")))]
@@ -875,10 +876,8 @@ pub fn http_request(url: String, method: String, body: Option<String>, header: S
 
 #[inline]
 pub fn get_async_http_status(url: String) -> Option<String> {
-    match ASYNC_HTTP_STATUS.lock().unwrap().get(&url) {
-        None => None,
-        Some(_str) => Some(_str.to_string()),
-    }
+    let mut statuses = ASYNC_HTTP_STATUS.lock().unwrap();
+    http_status::read_status(&mut statuses, &url)
 }
 
 #[inline]

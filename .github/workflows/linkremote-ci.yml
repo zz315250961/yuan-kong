@@ -10,6 +10,8 @@ on:
       - 'src/client.rs'
       - 'src/client/**'
       - 'src/ui_session_interface.rs'
+      - 'src/ui_interface.rs'
+      - 'src/ui_interface/**'
       - 'libs/hbb_common'
       - 'src/server/video_policy.rs'
       - 'src/server/video_qos.rs'
@@ -23,6 +25,8 @@ on:
       - 'src/client.rs'
       - 'src/client/**'
       - 'src/ui_session_interface.rs'
+      - 'src/ui_interface.rs'
+      - 'src/ui_interface/**'
       - 'libs/hbb_common'
       - 'src/server/video_policy.rs'
       - 'src/server/video_qos.rs'
@@ -59,4 +63,8 @@ jobs:
         run: python -m unittest discover -s tests -p test_ios_voice_runner.py -v
       - name: Test production voice packetizer and cancellation controls
         run: python tests/run_ios_voice_tests.py
+      - name: Verify HTTP-result cache production wiring
+        run: python -m unittest discover -s tests -p test_http_status_runner.py -v
+      - name: Test production namespaced HTTP-result consumption
+        run: python tests/run_http_status_tests.py
       - run: python tests/run_video_policy_tests.py
