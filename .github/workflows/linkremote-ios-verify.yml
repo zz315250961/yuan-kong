@@ -54,11 +54,23 @@ jobs:
           targets: ${{ matrix.rust_target }}
           components: rustfmt
 
+      - name: Cache Rust builds and pinned native tools
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: linkremote-ios-${{ runner.os }}-${{ runner.arch }}-rust1.75-frb1.80.1-expand1.0.95-nasm2.16.03-${{ matrix.mode }}
+          cache-bin: true
+          cache-on-failure: true
+          cache-directories: ${{ runner.tool_cache }}/linkremote/nasm-2.16.03
+
       - name: Install Flutter-Rust bridge build tools
         shell: bash
         run: |
-          cargo install cargo-expand --version 1.0.95 --locked
-          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
+          if [[ "$(cargo expand --version 2>/dev/null)" != 'cargo-expand 1.0.95' ]]; then
+            cargo install cargo-expand --version 1.0.95 --locked
+          fi
+          if [[ "$(flutter_rust_bridge_codegen --version 2>/dev/null)" != 'flutter_rust_bridge_codegen 1.80.1' ]]; then
+            cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
+          fi
 
       - name: Install iOS native libraries
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
@@ -69,7 +81,30 @@ jobs:
 
       - name: Install native build tools
         shell: bash
-        run: brew install nasm pkg-config
+        run: |
+          brew install pkg-config
+          # AOM at our pinned vcpkg baseline parses `nasm -hf` for -Ox. NASM 3
+          # changed its help layout, so keep the compatible 2.x assembler,
+          # retaining all assembly optimizations rather than disabling SIMD.
+          nasm_prefix="$RUNNER_TOOL_CACHE/linkremote/nasm-2.16.03"
+          if [[ ! -x "$nasm_prefix/bin/nasm" ]]; then
+            nasm_build="$(mktemp -d "$RUNNER_TEMP/linkremote-nasm.XXXXXX")"
+            curl --fail --location --retry 3 \
+              https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz \
+              --output "$nasm_build/nasm-2.16.03.tar.xz"
+            printf '1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148  %s\n' \
+              "$nasm_build/nasm-2.16.03.tar.xz" | shasum -a 256 --check
+            tar -xf "$nasm_build/nasm-2.16.03.tar.xz" -C "$nasm_build"
+            (
+              cd "$nasm_build/nasm-2.16.03"
+              ./configure --prefix="$nasm_prefix"
+              make -j"$(sysctl -n hw.logicalcpu)"
+              make install
+            )
+          fi
+          printf '%s\n' "$nasm_prefix/bin" >> "$GITHUB_PATH"
+          "$nasm_prefix/bin/nasm" -v
+          "$nasm_prefix/bin/nasm" -hf | grep -- -Ox
 
       - name: Build native dependencies for iOS
         if: matrix.mode == 'device'
