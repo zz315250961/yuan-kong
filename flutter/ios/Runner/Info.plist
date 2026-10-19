@@ -74,6 +74,8 @@
   <true/>
   <key>NSCameraUsageDescription</key>
   <string>LinkRemote uses the camera to scan a device connection QR code.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>LinkRemote uses your microphone only during a voice call you start with a remote device.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>LinkRemote reads a photo you select to find a device connection QR code.</string>
   <key>NSLocalNetworkUsageDescription</key>

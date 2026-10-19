@@ -6,8 +6,17 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      source_sha:
+        description: Exact 40-character commit SHA selected by the workflow ref
+        required: true
+        type: string
+      candidate_only:
+        description: Upload run artifacts only; do not create tags or change draft releases
+        required: true
+        type: boolean
+        default: true
       tag:
-        description: Release tag name, e.g. v1.0.1 (defaults to push tag)
+        description: Existing version tag (required only when candidate_only is false)
         required: false
         default: ""
   push:
@@ -25,6 +34,8 @@ env:
   FLUTTER_VERSION: "3.24.5"
   ANDROID_FLUTTER_VERSION: "3.24.5"
   TAG_NAME: "${{ github.event.inputs.tag || github.ref_name }}"
+  EXPECTED_SOURCE_SHA: "${{ github.event_name == 'push' && github.sha || inputs.source_sha }}"
+  PUBLISH_RELEASE: "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.candidate_only == false) }}"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   # vcpkg version: 2025.08.27
   # If we change the `VCPKG COMMIT_ID`, please remember:
@@ -33,17 +44,46 @@ env:
   #  https://github.com/rustdesk/rustdesk/actions/runs/14414119794/job/40427970174
   # 2. Update the `VCPKG_COMMIT_ID` in `ci.yml` and `playground.yml`.
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  VERSION: "1.0.43"
+  VERSION: "1.0.44"
   NDK_VERSION: "r28c"
   #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
+  # Public certificate fingerprint from stable 1.0.42; never a private signing key.
+  EXPECTED_ANDROID_CERT_SHA256: "c99e74633706c5ac413bf3c4e4782ceabd7b156eae6b288664986927d1aa1b01"
   UPLOAD_ARTIFACT: "true"
   SIGN_BASE_URL: "-2"
 
 
 jobs:
 
+  prepare-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Validate candidate source and version
+        run: python .github/release_candidate.py --check-source
+      - name: Verify release packaging regressions
+        run: |
+          python .github/tests/test_release_scope.py -v
+          python .github/tests/test_release_packaging.py -v
+      - name: Refuse to overwrite an existing release
+        if: env.PUBLISH_RELEASE == 'true'
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              ...context.repo, per_page: 100
+            });
+            if (releases.some(release => release.tag_name === process.env.TAG_NAME)) {
+              throw new Error('Release already exists; existing assets must not be overwritten');
+            }
+
   generate-bridge:
+    needs: [prepare-release]
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
@@ -59,6 +99,8 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           submodules: recursive
 
       - name: Install prerequisites
@@ -134,6 +176,7 @@ jobs:
             ./flutter/ios/Runner/bridge_generated.h
 
   build-privacy-window:
+    needs: [prepare-release]
     runs-on: windows-2022
     strategy:
         fail-fast: false
@@ -188,6 +231,8 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           submodules: recursive
 
       - name: Restore bridge files
@@ -373,13 +418,27 @@ jobs:
         run: |
           BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput
 
+      - name: Record Windows candidate provenance
+        run: python .github/release_candidate.py --platform windows --output windows-provenance.json ./SignOutput/LinkRemote-${{ env.VERSION }}-${{ matrix.job.arch }}.exe ./SignOutput/LinkRemote-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+
+      - name: Upload Windows candidate packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: LinkRemote-${{ env.VERSION }}-windows-${{ matrix.job.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            ./SignOutput/LinkRemote-*.exe
+            ./SignOutput/LinkRemote-*.msi
+            windows-provenance.json
+
       - name: Publish Release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        if: env.UPLOAD_ARTIFACT == 'true'
+        if: env.UPLOAD_ARTIFACT == 'true' && env.PUBLISH_RELEASE == 'true'
         with:
           draft: true
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           files: |
             ./SignOutput/LinkRemote-*.msi
             ./SignOutput/LinkRemote-*.exe
@@ -457,6 +516,8 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           submodules: recursive
 
       - name: Install flutter
@@ -553,6 +614,12 @@ jobs:
           mv ../LinkRemote-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk .
 
       # https://github.com/r0adkll/sign-android-release/issues/84#issuecomment-1889636075
+      - name: Require configured Android signing identity
+        if: env.ANDROID_SIGNING_KEY == ''
+        run: |
+          echo "Android candidate signing is unavailable; refusing to distribute a debug-signed APK"
+          exit 1
+
       - name: Setup sign tool version variable
         shell: bash
         run: |
@@ -574,39 +641,50 @@ jobs:
           # env.ANDROID_SIGN_TOOL_VERSION is set by Step "Setup sign tool version variable"
           BUILD_TOOLS_VERSION: ${{ env.ANDROID_SIGN_TOOL_VERSION }}
 
+      - name: Verify signed Android candidate and record provenance
+        shell: bash
+        env:
+          SIGNED_APK: ${{ steps.sign-rustdesk.outputs.signedReleaseFile }}
+        run: |
+          set -euo pipefail
+          test -f "$SIGNED_APK"
+          "${ANDROID_HOME}/build-tools/${ANDROID_SIGN_TOOL_VERSION}/apksigner" verify --verbose --print-certs "$SIGNED_APK" | tee android-signature.txt
+          grep -Fx "Signer #1 certificate SHA-256 digest: ${EXPECTED_ANDROID_CERT_SHA256}" android-signature.txt
+          "${ANDROID_HOME}/build-tools/${ANDROID_SIGN_TOOL_VERSION}/zipalign" -c -P 16 -v 4 "$SIGNED_APK"
+          python tests/verify_android_artifact.py "$SIGNED_APK"
+          python .github/release_candidate.py --platform android --output android-provenance.json "$SIGNED_APK"
+
       - name: Upload Artifacts
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: LinkRemote-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
-          path: ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
+          name: LinkRemote-${{ env.VERSION }}-${{ matrix.job.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
+            android-provenance.json
+            android-signature.txt
 
       - name: Publish signed apk package
-        if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
+        if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true' && env.PUBLISH_RELEASE == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           draft: true
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           files: |
             ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
 
-      - name: Publish unsigned apk package
-        if: env.ANDROID_SIGNING_KEY == null && env.UPLOAD_ARTIFACT == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          draft: true
-          prerelease: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            signed-apk/LinkRemote-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
-
   web-management:
+    needs: [prepare-release]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           submodules: recursive
 
       - name: Test Web management API
@@ -618,17 +696,25 @@ jobs:
       - name: Package Web management server
         run: zip -r "LinkRemote-${VERSION}-web-management.zip" server/linkremote-api server/nginx server/README.md LICENCE NOTICE.md -x '*/data/*' '*/smtp.json' '*/__pycache__/*'
 
+      - name: Record Web candidate provenance
+        run: python .github/release_candidate.py --platform web --output web-provenance.json "LinkRemote-${VERSION}-web-management.zip"
+
       - name: Upload Web management artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: web-management
-          path: LinkRemote-${{ env.VERSION }}-web-management.zip
+          name: LinkRemote-${{ env.VERSION }}-web-management-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            LinkRemote-${{ env.VERSION }}-web-management.zip
+            web-provenance.json
 
       - name: Publish Web management release asset
+        if: env.PUBLISH_RELEASE == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           draft: true
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           files: LinkRemote-${{ env.VERSION }}-web-management.zip
 

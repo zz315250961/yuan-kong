@@ -32,7 +32,7 @@ python3 flutter/ios/verify_controller.py --app flutter/build/ios/iphoneos/Runner
 
 手动触发 `.github/workflows/linkremote-ios-verify.yml` 可在 macOS 完整构建；工作流会上传经过校验的 `linkremote-ios-unsigned.zip`，保留 `.app` 内文件的执行权限。构建成功不能替代签名、连接功能和真机性能验收。
 
-工作流的 `build_target` 可选 `both`、`device`、`simulator`，默认并行检查两个目标。单项重试不需要停止另一个正在运行的任务。例如对当前验证分支触发两目标检查：
+工作流的 `build_target` 可选 `both`、`device`、`simulator` 和诊断专用 `simulator-ui-replay`，默认并行构建两个目标。后者严格校验指定历史 run、提交、原始 ZIP 哈希、版本与平台，只重放已有 App，不能作为当前源码的构建验收。可选 `simulator_fresh_devices=true` 仅为这次诊断创建并删除自有同型号设备，不删除 runner 预置或其他设备，不放宽启动/首帧断言。例如对当前验证分支触发两目标检查：
 
 ```bash
 gh workflow run linkremote-ios-verify.yml --repo zz315250961/yuan-kong \
@@ -80,13 +80,15 @@ Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路�
 ## 原生配置范围
 
 - 最低 iOS 13，同时包含 iPhone 与 iPad；竖屏和左右横屏均已声明，iPad 也支持倒置竖屏。
-- 相机/照片权限说明为扫码和相册识码用途预留；当前 `ScanPage` 虽有实现文件，但没有 import、实例或路由入口，不能把扫码连接标为已接入，也不能仅列作“待真机测试”。本地网络权限说明用于局域网设备连接；权限声明本身不证明相关功能已可用。
+- 1.0.44 源码已把扫码接入连接首页；相机与相册经过同一校验，服务器配置码先打开可编辑设置确认，不静默改服务器。覆盖非法/超长码、自连、重复回调、取消、权限拒绝恢复及离页后回调。相册解码使用独立 isolate，限制文件和像素数。组件/模拟平台通道测试通过不等于 iOS 原生相机或真实设备已验收。本地网络权限说明用于局域网设备连接。
 - `linkremote://` 由现有 `uni_links` 插件处理。`FlutterDeepLinkingEnabled=false` 明确关闭 Flutter 内置处理，避免升级 Flutter 后同一链接被两套处理器消费；不申请未实现的 Universal Links 域名能力。
 - 不声明后台被控服务。系统暂停 App 后不能保证连接持续收发，返回前台的恢复行为须在签名真机验收。
 - iOS 使用会话工具栏的显式剪贴板粘贴；`mChannel` 是 Android 平台通道，不把 Android 的后台剪贴板调用视为 iOS 自动同步已实现。
-- 聊天仅支持文字，不支持麦克风双向 Voice call，也不为未实现的功能申请麦克风权限。接收远端系统音频已有 CPAL/Opus 实现，但尚须签名真机验收声音、音量和中断恢复，不能由编译或 Simulator 启动推断已通过。
+- 1.0.44 源码新增控制端发起双向 Voice call：工具栏入口 → 用户麦克风授权 → 原生前台音频会话 → 现有远端接受协议 → 独立 Rust CPAL 录音/Opus 上行。首段真实 PCM 成功编码后才进入已连接状态；采用 48 kHz mono、32 kbps、20 ms 包，PCM 和编码后排队均有上限。远端下行仍经现有 Opus 解码；iOS 输出回调不再休眠或动态分配，不等待解码锁。
+- 语音等待 45 秒无响应会关闭；拒绝/录音失败、手动结束、断线、离页、切后台及系统音频中断都清理所属通话。授权弹窗的 inactive 状态不误当后台；回前台不自动重新开麦。通话标识过滤旧录音线程的迟到消息，启动任务可取消，不阻塞主网络循环。并非新增 iOS 被控端或被控端主动呼叫。
+- 音质边界：锁定 CPAL 使用 RemoteIO，设置 `.voiceChat` 不会自动变成 VoiceProcessingIO，不能宣称已有免提 AEC/AGC。界面提示建议耳机；耳机/扬声器、蓝牙路由、音量、双向可听、来电中断及停止后麦克风指示都必须签名真机验收。参见 [CPAL 锁定实现](https://raw.githubusercontent.com/rustdesk-org/cpal/6b374bcaed076750ca8fce6da518ab39b882e14a/src/host/coreaudio/ios/mod.rs) 和 [Apple voiceChat 模式说明](https://developer.apple.com/documentation/avfaudio/avaudiosession/mode-swift.struct/voicechat)。源码与自动测试不能代替这些验收。
 
-## 验证证据与边界（2026-10-19）
+## 1.0.43 历史验证证据与边界（2026-10-19）
 
 本轮已在云端 Intel macOS / Xcode 16.4 完成两个目标的真实编译；本机仍是 Windows，并未执行本地 Xcode 编译或真机签名。两个目标来源不同，不能把其中一个提交当成所有候选二进制的来源：
 

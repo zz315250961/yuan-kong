@@ -51,7 +51,7 @@ class HomePageState extends State<HomePage> {
     _chatPageTabIndex = -1;
     if (!bind.isIncomingOnly()) {
       _pages.add(ConnectionPage(
-        appBarActions: [myDevicesAction()],
+        appBarActions: [const ScanConnectionAction(), myDevicesAction()],
       ));
     }
     if (isAndroid && !bind.isOutgoingOnly()) {

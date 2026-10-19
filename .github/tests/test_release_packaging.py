@@ -1,6 +1,8 @@
 """Distribution metadata checks; no client executable or installer is run."""
 
 from pathlib import Path
+import hashlib
+import importlib.util
 import re
 import runpy
 import shlex
@@ -14,6 +16,9 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location("release_candidate", ROOT / ".github/release_candidate.py")
+CANDIDATE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CANDIDATE)
 
 
 def web_package_command():
@@ -46,7 +51,7 @@ class MsiLicenseTest(unittest.TestCase):
 
             process = mock.Mock()
             process.communicate.return_value = (b"2026-10-19 10:00", None)
-            args = [str(script), "--app-name", "LinkRemote", "--version", "1.0.43",
+            args = [str(script), "--app-name", "LinkRemote", "--version", "1.0.44",
                     "--revision-version", "123", "--manufacturer", "LinkRemote contributors",
                     "-d", "../../dist"]
             # The preprocessor normally asks the built client for its build date.
@@ -59,6 +64,75 @@ class MsiLicenseTest(unittest.TestCase):
             packaged_license = license_file.read_bytes()
             self.assertIn(b"derived from the RustDesk community project", packaged_license)
             self.assertEqual(packaged_license, reviewed_license)
+
+
+class CandidateSourceTest(unittest.TestCase):
+    SHA = "a" * 40
+
+    def test_candidate_does_not_require_or_create_a_tag(self):
+        CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", "branch-name", False)
+
+    def test_source_pin_rejects_blank_short_moving_and_different_refs(self):
+        for value in ("", "a" * 7, "branch-name", "b" * 40):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                CANDIDATE.validate_source(self.SHA, value, "1.0.44", "", False)
+
+    def test_publication_requires_matching_existing_immutable_version_tag(self):
+        CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", "v1.0.44", True, self.SHA)
+        for tag, tag_sha in (("v1.0.43", self.SHA), ("v1.0.44", None), ("v1.0.44", "b" * 40)):
+            with self.subTest(tag=tag, tag_sha=tag_sha), self.assertRaises(ValueError):
+                CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", tag, True, tag_sha)
+
+    def test_current_candidate_versions_are_consistent(self):
+        workflow = (ROOT / ".github/workflows/linkremote-release.yml").read_text(encoding="utf-8")
+        version = re.search(r'(?m)^  VERSION: "([0-9.]+)"$', workflow)[1]
+        metadata = CANDIDATE.candidate_versions(ROOT, version)
+        self.assertEqual(metadata["version"], version)
+        self.assertGreater(metadata["flutter_build"], 0)
+
+    def test_version_validation_does_not_accept_old_source_under_new_name(self):
+        with self.assertRaisesRegex(ValueError, "Cargo version"):
+            CANDIDATE.candidate_versions(ROOT, "0.0.0")
+
+    def test_provenance_records_real_file_hash_and_source_without_runtime_claims(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "LinkRemote-1.0.44-android-signed.apk"
+            # Hash input only: never install or execute this placeholder.
+            content = b"candidate-test-input"
+            path.write_bytes(content)
+            manifest = CANDIDATE.candidate_manifest(
+                ROOT, "android", [path], self.SHA,
+                {"version": "1.0.44", "flutter_build": 76},
+                {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "PUBLISH_RELEASE": "false"},
+            )
+            self.assertEqual(manifest["source_commit"], self.SHA)
+            self.assertEqual(manifest["run_id"], "123")
+            self.assertEqual(manifest["run_attempt"], "2")
+            self.assertTrue(manifest["candidate_only"])
+            self.assertEqual(manifest["artifacts"], [{
+                "name": path.name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()
+            }])
+            self.assertEqual({record["name"] for record in manifest["notices"]}, {"LICENCE", "NOTICE.md"})
+            self.assertIn("not installation, runtime, signature identity, or release approval", manifest["scope"])
+
+    def test_provenance_rejects_wrong_version_unsigned_or_duplicate_names(self):
+        metadata = {"version": "1.0.44", "flutter_build": 76}
+        for names in (
+            ["LinkRemote-1.0.43-android-signed.apk"],
+            ["LinkRemote-1.0.44-android.apk"],
+            ["LinkRemote-1.0.44-android-signed.apk"] * 2,
+        ):
+            with self.subTest(names=names), self.assertRaisesRegex(ValueError, "artifact names"):
+                CANDIDATE.candidate_manifest(ROOT, "android", names, self.SHA, metadata, {})
+
+    def test_provenance_rejects_missing_and_empty_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "LinkRemote-1.0.44-web-management.zip"
+            with self.assertRaisesRegex(ValueError, "Missing"):
+                CANDIDATE.artifact_record(path)
+            path.touch()
+            with self.assertRaisesRegex(ValueError, "Empty"):
+                CANDIDATE.artifact_record(path)
 
 
 class WebPackageTest(unittest.TestCase):

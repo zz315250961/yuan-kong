@@ -51,6 +51,47 @@ class ReleaseScopeTest(unittest.TestCase):
         self.assertIn("push:", block)
         self.assertIn("v[0-9]+.[0-9]+.[0-9]+", block)
 
+    def test_manual_candidate_is_source_pinned_and_cannot_publish_by_default(self):
+        workflow = text("linkremote-release.yml")
+        inputs = on_block(workflow)
+        self.assertRegex(inputs, r"(?s)source_sha:\n\s+description:[^\n]+\n\s+required: true\n\s+type: string")
+        self.assertRegex(inputs, r"(?s)candidate_only:\n\s+description:[^\n]+\n\s+required: true\n\s+type: boolean\n\s+default: true")
+        self.assertIn("EXPECTED_SOURCE_SHA: \"${{ github.event_name == 'push' && github.sha || inputs.source_sha }}\"", workflow)
+        self.assertIn("inputs.candidate_only == false", workflow)
+        checkout_count = len(re.findall(r"uses: actions/checkout@", workflow))
+        self.assertEqual(checkout_count, 5)
+        self.assertEqual(workflow.count("ref: ${{ github.sha }}"), checkout_count)
+        self.assertEqual(workflow.count("fetch-depth: 0"), checkout_count)
+        self.assertIn("python .github/release_candidate.py --check-source", workflow)
+        self.assertIn("Release already exists; existing assets must not be overwritten", workflow)
+
+    def test_candidate_builds_are_gated_and_final_packages_have_run_artifacts(self):
+        workflow = text("linkremote-release.yml")
+        for job in ("generate-bridge", "build-privacy-window", "web-management"):
+            self.assertRegex(workflow, rf"(?m)^  {job}:\n    needs: \[prepare-release\]$")
+        self.assertIn("needs: [build-privacy-window, generate-bridge]", workflow)
+        self.assertIn("needs: [generate-bridge]", workflow)
+        for platform in ("Windows", "Web"):
+            self.assertIn(f"Record {platform} candidate provenance", workflow)
+        self.assertIn("Verify signed Android candidate and record provenance", workflow)
+        self.assertIn("Upload Windows candidate packages", workflow)
+        self.assertIn("${{ github.run_id }}-${{ github.run_attempt }}", workflow)
+        self.assertIn("Require configured Android signing identity", workflow)
+        self.assertIn('grep -Fx "Signer #1 certificate SHA-256 digest: ${EXPECTED_ANDROID_CERT_SHA256}"', workflow)
+        self.assertIn("c99e74633706c5ac413bf3c4e4782ceabd7b156eae6b288664986927d1aa1b01", workflow)
+        self.assertNotIn("Publish unsigned apk package", workflow)
+
+    def test_all_release_uploads_require_explicit_publication(self):
+        workflow = text("linkremote-release.yml")
+        steps = re.split(r"(?m)^      - ", workflow)
+        publishers = [step for step in steps if "uses: softprops/action-gh-release@" in step]
+        self.assertEqual(len(publishers), 3)
+        for step in publishers:
+            self.assertRegex(step, r"(?m)^        if: .*env.PUBLISH_RELEASE == 'true'")
+            self.assertIn("target_commitish: ${{ github.sha }}", step)
+            self.assertIn("draft: true", step)
+            self.assertIn("prerelease: true", step)
+
     def test_product_release_contains_only_supported_architectures(self):
         workflow = text("linkremote-release.yml")
         self.assertIn("x86_64-pc-windows-msvc", workflow)

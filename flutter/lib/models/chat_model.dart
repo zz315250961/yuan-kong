@@ -19,6 +19,7 @@ import '../consts.dart';
 import '../common.dart';
 import '../common/widgets/overlay.dart';
 import '../main.dart';
+import '../utils/ios_voice_call.dart';
 import 'model.dart';
 
 class MessageKey {
@@ -66,6 +67,7 @@ class ChatModel with ChangeNotifier {
   final Rx<VoiceCallStatus> _voiceCallStatus = Rx(VoiceCallStatus.notStarted);
 
   Rx<VoiceCallStatus> get voiceCallStatus => _voiceCallStatus;
+  IosVoiceCallCoordinator? _iosVoiceCall;
 
   TextEditingController textController = TextEditingController();
   RxInt mobileUnreadSum = 0.obs;
@@ -80,6 +82,7 @@ class ChatModel with ChangeNotifier {
 
   @override
   void dispose() {
+    _iosVoiceCall?.dispose();
     textController.dispose();
     super.dispose();
   }
@@ -528,6 +531,7 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallStarted() {
     _voiceCallStatus.value = VoiceCallStatus.connected;
+    if (isIOS) _iosVoiceCall?.connected();
     if (isAndroid) {
       parent.target?.invokeMethod("on_voice_call_started");
     }
@@ -535,6 +539,9 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallClosed(String reason) {
     _voiceCallStatus.value = VoiceCallStatus.notStarted;
+    if (isIOS) {
+      unawaited(_iosVoiceCall?.stop(sendClose: false) ?? Future<void>.value());
+    }
     if (isAndroid) {
       // We can always invoke "on_voice_call_closed"
       // no matter if the `_voiceCallStatus` was `VoiceCallStatus.notStarted` or not.
@@ -548,8 +555,29 @@ class ChatModel with ChangeNotifier {
     }
   }
 
-  void closeVoiceCall() {
-    bind.sessionCloseVoiceCall(sessionId: sessionId);
+  Future<void> requestVoiceCall() async {
+    if (!isIOS) {
+      await bind.sessionRequestVoiceCall(sessionId: sessionId);
+      return;
+    }
+    _iosVoiceCall ??= IosVoiceCallCoordinator(
+      owner: sessionId.toString(),
+      requestCall: () => bind.sessionRequestVoiceCall(sessionId: sessionId),
+      closeCall: () => bind.sessionCloseVoiceCall(sessionId: sessionId),
+      onError: (message) => showToast(message),
+    );
+    // RemoteIO provides duplex transport, not acoustic echo cancellation.
+    // Keep the limitation visible until speakerphone quality is device-tested.
+    showToast('语音通话建议佩戴耳机，以减少免提回声。');
+    await _iosVoiceCall!.request();
+  }
+
+  Future<void> closeVoiceCall() async {
+    if (isIOS && _iosVoiceCall != null) {
+      await _iosVoiceCall!.stop();
+    } else {
+      await bind.sessionCloseVoiceCall(sessionId: sessionId);
+    }
   }
 }
 

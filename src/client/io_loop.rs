@@ -66,6 +66,10 @@ pub struct Remote<T: InvokeUiSession> {
     // Stop sending local audio to remote client.
     stop_voice_call_sender: Option<std::sync::mpsc::Sender<()>>,
     voice_call_request_timestamp: Option<NonZeroI64>,
+    #[cfg(target_os = "ios")]
+    ios_voice_timestamp: Option<i64>,
+    #[cfg(target_os = "ios")]
+    ios_voice_start_task: Option<tokio::task::JoinHandle<()>>,
     read_jobs: Vec<fs::TransferJob>,
     write_jobs: Vec<fs::TransferJob>,
     remove_jobs: HashMap<i32, RemoveJob>,
@@ -83,6 +87,14 @@ pub struct Remote<T: InvokeUiSession> {
     chroma: Arc<RwLock<Option<Chroma>>>,
     last_record_state: bool,
     sent_close_reason: bool,
+}
+
+impl<T: InvokeUiSession> Drop for Remote<T> {
+    fn drop(&mut self) {
+        // Aborting the session future must also abort a pending microphone
+        // start, not detach its Tokio task and leave capture running.
+        self.stop_voice_call();
+    }
 }
 
 #[derive(Default)]
@@ -126,6 +138,10 @@ impl<T: InvokeUiSession> Remote<T> {
             video_format: CodecFormat::Unknown,
             stop_voice_call_sender: None,
             voice_call_request_timestamp: None,
+            #[cfg(target_os = "ios")]
+            ios_voice_timestamp: None,
+            #[cfg(target_os = "ios")]
+            ios_voice_start_task: None,
             elevation_requested: false,
             peer_info: Default::default(),
             video_threads: Default::default(),
@@ -344,9 +360,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
                 log::debug!("Exit io_loop of id={}", self.handler.get_id());
                 // Stop client audio server.
-                if let Some(s) = self.stop_voice_call_sender.take() {
-                    s.send(()).ok();
-                }
+                self.stop_voice_call();
                 if kcp.is_some() {
                     // Send the close reason if it hasn't been sent yet, as KCP cannot detect the socket close event.
                     self.send_close_reason(&mut peer, "kcp").await;
@@ -465,6 +479,16 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     fn stop_voice_call(&mut self) {
+        // Clear outstanding requests as well: a late acceptance must not restart
+        // microphone capture after the user cancelled or left the session.
+        self.voice_call_request_timestamp = None;
+        #[cfg(target_os = "ios")]
+        {
+            self.ios_voice_timestamp = None;
+            if let Some(task) = self.ios_voice_start_task.take() {
+                task.abort();
+            }
+        }
         let voice_call_sender = std::mem::replace(&mut self.stop_voice_call_sender, None);
         if let Some(stopper) = voice_call_sender {
             let _ = stopper.send(());
@@ -472,6 +496,7 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     // Start a voice call recorder, records audio and send to remote
+    #[cfg(not(target_os = "ios"))]
     fn start_voice_call(&mut self) -> Option<std::sync::mpsc::Sender<()>> {
         if self.handler.is_file_transfer()
             || self.handler.is_port_forward()
@@ -545,10 +570,6 @@ impl<T: InvokeUiSession> Remote<T> {
             });
             return Some(tx);
         }
-        #[cfg(target_os = "ios")]
-        {
-            None
-        }
     }
 
     async fn send_close_reason(&mut self, peer: &mut Stream, reason: &str) {
@@ -566,6 +587,7 @@ impl<T: InvokeUiSession> Remote<T> {
     async fn handle_msg_from_ui(&mut self, data: Data, peer: &mut Stream) -> bool {
         match data {
             Data::Close => {
+                self.stop_voice_call();
                 self.send_close_reason(peer, "").await;
                 return false;
             }
@@ -980,6 +1002,15 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.elevation_requested = true;
             }
             Data::NewVoiceCall => {
+                if self.voice_call_request_timestamp.is_some()
+                    || self.stop_voice_call_sender.is_some()
+                {
+                    return true;
+                }
+                #[cfg(target_os = "ios")]
+                if self.ios_voice_timestamp.is_some() {
+                    return true;
+                }
                 let msg = new_voice_call_request(true);
                 // Save the voice call request timestamp for the further validation.
                 self.voice_call_request_timestamp = Some(
@@ -995,6 +1026,44 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.handler
                     .on_voice_call_closed("Closed manually by the peer");
                 allow_err!(peer.send(&msg).await);
+            }
+            #[cfg(target_os = "ios")]
+            Data::IosVoiceReady(timestamp, result) => {
+                if self.ios_voice_timestamp != Some(timestamp) {
+                    // Dropping a late success disconnects its worker's stop
+                    // receiver; never attach it to a newer call.
+                    drop(result);
+                    return true;
+                }
+                self.ios_voice_start_task = None;
+                match result {
+                    Ok(stopper) => {
+                        self.stop_voice_call_sender = Some(stopper);
+                        self.handler.on_voice_call_started();
+                    }
+                    Err(reason) => {
+                        self.stop_voice_call();
+                        self.handler.on_voice_call_closed(&reason);
+                        allow_err!(peer.send(&new_voice_call_request(false)).await);
+                    }
+                }
+            }
+            #[cfg(target_os = "ios")]
+            Data::IosVoiceMessage(timestamp, message, pending) => {
+                if self.ios_voice_timestamp == Some(timestamp) {
+                    allow_err!(peer.send(&message).await);
+                }
+                // Encoded voice messages have a per-call bound even while
+                // transport is slow. Old calls must release their own credits.
+                pending.fetch_sub(1, Ordering::Release);
+            }
+            #[cfg(target_os = "ios")]
+            Data::IosVoiceFailed(timestamp, reason) => {
+                if self.ios_voice_timestamp == Some(timestamp) {
+                    self.stop_voice_call();
+                    self.handler.on_voice_call_closed(&reason);
+                    allow_err!(peer.send(&new_voice_call_request(false)).await);
+                }
             }
             Data::ResetDecoder(display) => match display {
                 Some(display) => {
@@ -2081,22 +2150,41 @@ impl<T: InvokeUiSession> Remote<T> {
                         // TODO: maybe we will do a voice call from the peer in the future.
                     } else {
                         log::debug!("The remote has requested to close the voice call");
-                        if let Some(sender) = self.stop_voice_call_sender.take() {
-                            allow_err!(sender.send(()));
-                            self.handler.on_voice_call_closed("");
-                        }
+                        self.stop_voice_call();
+                        self.handler.on_voice_call_closed("");
                     }
                 }
                 Some(message::Union::VoiceCallResponse(response)) => {
-                    let ts = std::mem::replace(&mut self.voice_call_request_timestamp, None);
-                    if let Some(ts) = ts {
+                    if let Some(ts) = self.voice_call_request_timestamp {
                         if response.req_timestamp != ts.get() {
                             log::debug!("Possible encountering a voice call attack.");
                         } else {
+                            self.voice_call_request_timestamp = None;
                             if response.accepted {
                                 // The peer accepted the voice call.
-                                self.handler.on_voice_call_started();
-                                self.stop_voice_call_sender = self.start_voice_call();
+                                #[cfg(not(target_os = "ios"))]
+                                {
+                                    self.stop_voice_call_sender = self.start_voice_call();
+                                    if self.stop_voice_call_sender.is_some() {
+                                        self.handler.on_voice_call_started();
+                                    } else {
+                                        self.handler.on_voice_call_closed("Cannot start microphone");
+                                        allow_err!(peer.send(&new_voice_call_request(false)).await);
+                                    }
+                                }
+                                #[cfg(target_os = "ios")]
+                                {
+                                    let timestamp = ts.get();
+                                    self.ios_voice_timestamp = Some(timestamp);
+                                    let sender = self.sender.clone();
+                                    // Do not await microphone readiness in this
+                                    // loop: cancellation and disconnect must
+                                    // remain responsive during OS startup.
+                                    self.ios_voice_start_task = Some(tokio::spawn(async move {
+                                        let result = super::ios_voice::start(sender.clone(), timestamp).await;
+                                        let _ = sender.send(Data::IosVoiceReady(timestamp, result));
+                                    }));
+                                }
                             } else {
                                 // The peer refused the voice call.
                                 self.handler.on_voice_call_closed("");

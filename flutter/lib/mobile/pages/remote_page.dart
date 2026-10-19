@@ -147,6 +147,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
     // Stop local callbacks before any asynchronous platform/session cleanup.
+    if (isIOS) unawaited(gFFI.chatModel.closeVoiceCall());
     _timer?.cancel();
     _iosKeyboardWorkaroundTimer?.cancel();
     _orientationTimer?.cancel();
@@ -656,10 +657,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                   ? []
                   : <Widget>[
                       futureBuilder(
-                          future: gFFI.invokeMethod(
+                          future: isIOS ? Future.value(true) : gFFI.invokeMethod(
                               "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
                           hasData: (isSupportVoiceCall) => toolbarAction(
-                                icon: isAndroid && isSupportVoiceCall
+                                icon: (isAndroid || isIOS) && isSupportVoiceCall
                                     ? SvgPicture.asset(
                                         'assets/chat.svg',
                                         width: 24,
@@ -671,7 +672,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                         color: Colors.white),
                                 label: '聊天',
                                 onPressed: () =>
-                                    isAndroid && isSupportVoiceCall
+                                    (isAndroid || isIOS) && isSupportVoiceCall
                                         ? showChatOptions(widget.id)
                                         : onPressedTextChat(widget.id),
                               ))
@@ -863,8 +864,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   showChatOptions(String id) async {
-    onPressVoiceCall() => bind.sessionRequestVoiceCall(sessionId: sessionId);
-    onPressEndVoiceCall() => bind.sessionCloseVoiceCall(sessionId: sessionId);
+    onPressVoiceCall() => gFFI.chatModel.requestVoiceCall();
+    onPressEndVoiceCall() => gFFI.chatModel.closeVoiceCall();
 
     makeTextMenu(String label, Widget icon, VoidCallback onPressed,
             {TextStyle? labelStyle}) =>

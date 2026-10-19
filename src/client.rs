@@ -92,6 +92,10 @@ pub use super::lang::*;
 pub mod file_trait;
 pub mod helper;
 pub mod io_loop;
+#[cfg(target_os = "ios")]
+mod ios_voice;
+#[cfg(target_os = "ios")]
+mod voice_packetizer;
 pub mod screenshot;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
@@ -1509,6 +1513,31 @@ impl AudioHandler {
         let stream = device.build_output_stream(
             config,
             move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
+                #[cfg(target_os = "ios")]
+                {
+                    // CoreAudio's real-time output callback must neither sleep
+                    // nor allocate or wait on a decoder lock during duplex IO.
+                    let _ = info;
+                    if let Ok(mut flag) = ready.try_lock() {
+                        *flag = true;
+                    }
+                    let mut scratch = [0.0f32; 1024];
+                    if let Ok(mut buffer) = audio_buffer.try_lock() {
+                        for chunk in data.chunks_mut(scratch.len()) {
+                            scratch.fill(0.0);
+                            buffer.pop_slice(&mut scratch[..chunk.len()]);
+                            for (sample, pcm) in chunk.iter_mut().zip(scratch.iter()) {
+                                *sample = T::from_sample(*pcm);
+                            }
+                        }
+                    } else {
+                        for sample in data.iter_mut() {
+                            *sample = T::from_sample(0.0);
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "ios"))]
+                {
                 if !*ready.lock().unwrap() {
                     *ready.lock().unwrap() = true;
                 }
@@ -1554,6 +1583,7 @@ impl AudioHandler {
                         Some(x) => T::from_sample(x),
                         _ => T::from_sample(0.),
                     };
+                }
                 }
             },
             err_fn,
@@ -3863,6 +3893,12 @@ pub enum Data {
     ElevateWithLogon(String, String),
     NewVoiceCall,
     CloseVoiceCall,
+    #[cfg(target_os = "ios")]
+    IosVoiceReady(i64, Result<std::sync::mpsc::Sender<()>, String>),
+    #[cfg(target_os = "ios")]
+    IosVoiceMessage(i64, Message, Arc<std::sync::atomic::AtomicUsize>),
+    #[cfg(target_os = "ios")]
+    IosVoiceFailed(i64, String),
     ContinueInsecureConnection,
     ResetDecoder(Option<usize>),
     RenameFile((i32, String, String, bool)),

@@ -41,6 +41,11 @@ class DeviceArtifactTests(unittest.TestCase):
     def test_current_arm64_device_artifact_passes(self):
         self.inspect()
 
+    def test_missing_microphone_purpose_is_rejected(self):
+        self.info.pop('NSMicrophoneUsageDescription', None)
+        with self.assertRaisesRegex(ValueError, 'NSMicrophoneUsageDescription'):
+            self.inspect()
+
     def test_old_or_wrong_bundle_fails(self):
         self.info["CFBundleIdentifier"] = "com.carriez.flutter_hbb"
         with self.assertRaisesRegex(ValueError, "bundle ID"):

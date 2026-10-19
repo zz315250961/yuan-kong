@@ -3,12 +3,16 @@ import Flutter
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
+  private var voiceSession: LinkRemoteVoiceSession?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     dummyMethodToEnforceBundling();
+    if let controller = window?.rootViewController as? FlutterViewController {
+      voiceSession = LinkRemoteVoiceSession(messenger: controller.binaryMessenger)
+    }
     #if targetEnvironment(simulator)
     // CI waits for an actual Flutter frame, rather than accepting a launch PID
     // while asynchronous Rust initialization might still be stuck.

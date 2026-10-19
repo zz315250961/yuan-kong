@@ -121,6 +121,9 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   @override
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    // Cancel microphone permission/capture before any platform await on pop.
+    if (isIOS) unawaited(gFFI.chatModel.closeVoiceCall());
+    unawaited(bind.sessionClose(sessionId: sessionId));
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
@@ -321,17 +324,17 @@ class _ViewCameraPageState extends State<ViewCameraPage>
                       ? []
                       : <Widget>[
                           futureBuilder(
-                              future: gFFI.invokeMethod(
+                              future: isIOS ? Future.value(true) : gFFI.invokeMethod(
                                   "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
                               hasData: (isSupportVoiceCall) => IconButton(
                                     color: Colors.white,
-                                    icon: isAndroid && isSupportVoiceCall
+                                    icon: (isAndroid || isIOS) && isSupportVoiceCall
                                         ? SvgPicture.asset('assets/chat.svg',
                                             colorFilter: ColorFilter.mode(
                                                 Colors.white, BlendMode.srcIn))
                                         : Icon(Icons.message),
                                     onPressed: () =>
-                                        isAndroid && isSupportVoiceCall
+                                        (isAndroid || isIOS) && isSupportVoiceCall
                                             ? showChatOptions(widget.id)
                                             : onPressedTextChat(widget.id),
                                   ))
@@ -493,8 +496,8 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   }
 
   showChatOptions(String id) async {
-    onPressVoiceCall() => bind.sessionRequestVoiceCall(sessionId: sessionId);
-    onPressEndVoiceCall() => bind.sessionCloseVoiceCall(sessionId: sessionId);
+    onPressVoiceCall() => gFFI.chatModel.requestVoiceCall();
+    onPressEndVoiceCall() => gFFI.chatModel.closeVoiceCall();
 
     makeTextMenu(String label, Widget icon, VoidCallback onPressed,
             {TextStyle? labelStyle}) =>

@@ -30,6 +30,7 @@ import 'package:window_size/window_size.dart' as window_size;
 
 import '../consts.dart';
 import 'common/widgets/overlay.dart';
+import 'common/mobile_connection_link.dart';
 import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
 import 'mobile/pages/view_camera_page.dart';
@@ -2218,7 +2219,7 @@ Future<bool> initUniLinks() async {
   // check cold boot
   try {
     final initialLink = await getInitialLink();
-    print("initialLink: $initialLink");
+    debugPrint('Initial application link received: ${initialLink != null}');
     if (initialLink == null || initialLink.isEmpty) {
       return false;
     }
@@ -2245,7 +2246,7 @@ StreamSubscription? listenUniLinks({handleByFlutter = true}) {
   }
 
   final sub = uriLinkStream.listen((Uri? uri) {
-    debugPrint("A uri was received: $uri. handleByFlutter $handleByFlutter");
+    debugPrint('Application link received. handleByFlutter $handleByFlutter');
     if (uri != null) {
       if (handleByFlutter) {
         handleUriLink(uri: uri);
@@ -2279,6 +2280,13 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
   List<String>? args;
   if (cmdArgs != null && cmdArgs.isNotEmpty) {
     args = cmdArgs;
+    for (var i = 0; i < args.length; i++) {
+      if (const [
+        '--connect', '--play', '--file-transfer', '--view-camera',
+        '--port-forward', '--rdp', '--terminal', '--terminal-admin',
+        '--password', '--switch_uuid'
+      ].contains(args[i]) && i + 1 >= args.length) return false;
+    }
     // rustdesk <uri link>
     if (args[0].startsWith(bind.mainUriPrefixSync())) {
       final uri = Uri.tryParse(args[0]);
@@ -2411,6 +2419,13 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
 }
 
 List<String>? urlLinkToCmdArgs(Uri uri) {
+  if (uri.scheme.toLowerCase() != 'linkremote') return null;
+  if (isMobile && uri.authority != 'config' && uri.authority != 'password') {
+    final link = MobileConnectionLink.parse(uri.toString());
+    if (link == null) return null;
+    unawaited(_openMobileConnectionLink(link));
+    return null;
+  }
   String? command;
   String? id;
   final options = [
@@ -2544,6 +2559,35 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
   return null;
 }
 
+final _mobileLinkGate = MobileConnectionGate();
+
+Future<void> _openMobileConnectionLink(MobileConnectionLink link) async {
+  // The global navigator exists only after the first frame on a cold launch.
+  await WidgetsBinding.instance.endOfFrame;
+  final context = globalKey.currentContext ?? Get.context;
+  if (context == null || !context.mounted) return;
+  try {
+    await _mobileLinkGate.open(link,
+        localId: bind.mainGetMyId,
+        isActive: () => context.mounted &&
+            stateGlobal.isInMainPage &&
+            !(globalKey.currentState?.canPop() ?? false),
+        onSelf: () => showToast(translate('Cannot connect to self')),
+        navigate: (request) async {
+          await connect(context, request.id,
+              isFileTransfer: request.kind == MobileConnectionKind.fileTransfer,
+              isViewCamera: request.kind == MobileConnectionKind.viewCamera,
+              isTerminal: request.kind == MobileConnectionKind.terminal,
+              forceRelay: request.forceRelay,
+              password: request.password);
+        });
+  } catch (e) {
+    // Do not log links/passwords from untrusted QR or OS event payloads.
+    debugPrint('Unable to open mobile connection link: ${e.runtimeType}');
+    if (context.mounted) showToast(translate('Failed'));
+  }
+}
+
 connectMainDesktop(String id,
     {required bool isFileTransfer,
     required bool isViewCamera,
@@ -2617,6 +2661,7 @@ connect(BuildContext context, String id,
   id = id.replaceAll(' ', '');
   final oldId = id;
   id = await bind.mainHandleRelayId(id: id);
+  if (!context.mounted) return;
   forceRelay = id != oldId || forceRelay;
   assert(!(isFileTransfer && isTcpTunneling && isRDP),
       "more than one connect type");
@@ -2656,6 +2701,7 @@ connect(BuildContext context, String id,
             return;
           }
         }
+        if (!context.mounted) return;
       }
       if (isWeb) {
         Navigator.push(

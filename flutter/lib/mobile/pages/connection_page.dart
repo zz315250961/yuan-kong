@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 
 import '../../common.dart';
+import '../../common/mobile_connection_link.dart';
 import '../../common/widgets/peer_tab_page.dart';
 import '../../common/widgets/autocomplete.dart';
 import '../../common/widgets/my_devices.dart';
@@ -18,6 +19,8 @@ import '../../consts.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import 'home_page.dart';
+import 'scan_page.dart';
+import '../widgets/dialog.dart';
 
 /// Connection page for connecting to a remote peer.
 class ConnectionPage extends StatefulWidget implements PageShape {
@@ -413,4 +416,73 @@ Widget myDevicesAction() {
       showMyDevicesDialog();
     },
   );
+}
+
+/// Scan results are returned before navigating, so camera callbacks cannot
+/// close an existing session or silently overwrite server settings.
+class ScanConnectionAction extends StatefulWidget {
+  const ScanConnectionAction({super.key});
+
+  @override
+  State<ScanConnectionAction> createState() => _ScanConnectionActionState();
+}
+
+class _ScanConnectionActionState extends State<ScanConnectionAction> {
+  final _gate = MobileConnectionGate();
+  bool _opening = false;
+
+  Future<void> _scan() async {
+    if (_opening) return;
+    setState(() => _opening = true);
+    try {
+      final result = await Navigator.of(context).push<MobileScanResult>(
+          MaterialPageRoute(builder: (_) => const ScanPage()));
+      if (!mounted || result == null) return;
+      final config = result.serverConfig;
+      if (config != null) {
+        showServerSettingsWithValue(
+            ServerConfig(
+                idServer: config['host'],
+                relayServer: config['relay'],
+                apiServer: config['api'],
+                key: config['key']),
+            gFFI.dialogManager,
+            null);
+        return;
+      }
+      final link = result.connection;
+      if (link != null) {
+        await _gate.open(link,
+            localId: bind.mainGetMyId,
+            isActive: () => mounted && stateGlobal.isInMainPage,
+            onSelf: () => showToast(translate('Cannot connect to self')),
+            navigate: (request) async {
+              await connect(context, request.id,
+                  isFileTransfer:
+                      request.kind == MobileConnectionKind.fileTransfer,
+                  isViewCamera: request.kind == MobileConnectionKind.viewCamera,
+                  isTerminal: request.kind == MobileConnectionKind.terminal,
+                  forceRelay: request.forceRelay,
+                  password: request.password);
+            });
+      }
+    } catch (e) {
+      debugPrint('Unable to open scanned connection: ${e.runtimeType}');
+      if (mounted) showToast(translate('Failed'));
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+      tooltip: '扫码连接',
+      onPressed: _opening ? null : _scan,
+      icon: const Icon(Icons.qr_code_scanner));
+
+  @override
+  void dispose() {
+    _gate.dispose();
+    super.dispose();
+  }
 }

@@ -40,7 +40,7 @@ def check_info(info):
                  "UIInterfaceOrientationLandscapeRight"}.issubset(orientations),
                 "Missing portrait or landscape support for " + (device or "iPhone"))
     for permission in ("NSCameraUsageDescription", "NSPhotoLibraryUsageDescription",
-                       "NSLocalNetworkUsageDescription"):
+                       "NSLocalNetworkUsageDescription", "NSMicrophoneUsageDescription"):
         require(bool(info.get(permission)), "Missing permission purpose: " + permission)
     require(not info.get("UIBackgroundModes"),
             "The controller must not claim unsupported background host capabilities")
