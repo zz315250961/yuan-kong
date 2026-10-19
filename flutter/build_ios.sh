@@ -27,7 +27,6 @@ done
 cargo expand --version >/dev/null
 rust_target=aarch64-apple-ios
 rust_features=flutter,hwcodec
-apple_sdk=iphoneos
 if [[ "${1:-}" == "--simulator" ]]; then
   if [[ "$(uname -m)" != x86_64 ]]; then
     printf '%s\n' 'The verified simulator path requires an Intel Mac (CI: macos-15-intel).' >&2
@@ -35,7 +34,6 @@ if [[ "${1:-}" == "--simulator" ]]; then
   fi
   rust_target=x86_64-apple-ios
   rust_features=flutter
-  apple_sdk=iphonesimulator
 fi
 
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,8 +51,9 @@ flutter_rust_bridge_codegen \
   --dart-output ./flutter/lib/generated_bridge.dart \
   --c-output ./flutter/ios/Runner/bridge_generated.h \
   --class-name Rustdesk 2>&1 | tee -a "$build_log"
-SDKROOT="$(xcrun --sdk "$apple_sdk" --show-sdk-path)" \
-  IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+# Cargo also compiles host build-dependencies. A process-wide iOS SDKROOT would
+# feed iPhone headers to their macOS C compiler; let Rust/cc-rs select each SDK.
+IPHONEOS_DEPLOYMENT_TARGET=13.0 \
   cargo build --locked --features "$rust_features" --release --target "$rust_target" --lib \
     2>&1 | tee -a "$build_log"
 cd flutter
