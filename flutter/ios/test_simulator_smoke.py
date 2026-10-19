@@ -82,10 +82,27 @@ class SimulatorSequenceTests(unittest.TestCase):
             self.assertLess(self.events.index(("screenshot", name)), open_index)
         light = self.events.index(("ui", "test-udid", "appearance", "light"),
                                   self.events.index(("screenshot", "iphone-home-dark.png")))
-        safari = self.events.index(("launch", "test-udid", "com.apple.mobilesafari"))
+        safari = self.events.index(("launch", "test-udid", "com.apple.mobilesafari"),
+                                   self.events.index(("screenshot", "iphone-home-dark.png")))
         self.assertLess(light, safari)
         self.assertFalse(result["url_delivery_verified"])
         self.assertEqual(result["url_delivery_status"], "system_confirmation_requires_manual_verification")
+
+    def test_native_controls_and_browser_cold_start_finish_before_target_app_install(self):
+        result = self.run_smoke()
+        install = next(index for index, event in enumerate(self.events) if event[0] == "install")
+        safari = self.events.index(("launch", "test-udid", "com.apple.mobilesafari"))
+        settings = self.events.index(("launch", "test-udid", "com.apple.Preferences"))
+        self.assertLess(safari, settings)
+        self.assertLess(settings, install)
+        self.assertEqual(result["native_control_bundle"], "com.apple.Preferences")
+        self.assertEqual(result["native_screenshots"], ["iphone-native-safari-prewarmed.png",
+                                                       "iphone-native-settings-light.png",
+                                                       "iphone-native-settings-dark.png"])
+        for name in result["native_screenshots"]:
+            self.assertLess(self.events.index(("screenshot", name)), install)
+        self.assertTrue(any(item["stage"] == "prewarm native Safari before target app startup"
+                            and item["elapsed_seconds"] >= 0 for item in result["stage_timings"]))
 
     def test_failure_screenshot_and_cleanup_timeout_preserve_primary_error(self):
         result = self.run_smoke(fail_frame=True, fail_cleanup=True)

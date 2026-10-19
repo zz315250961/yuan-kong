@@ -5,12 +5,14 @@ import UIKit
 /// Audio-session policy only. PCM capture and Opus transport stay in Rust;
 /// this class never records before explicit permission and a call request.
 final class LinkRemoteVoiceSession {
+  private typealias AudioPolicy = (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)
   private let channel: FlutterMethodChannel
   private let audio = AVAudioSession.sharedInstance()
   private var owner: String?
   private var generation: UInt64 = 0
   private var pendingResult: FlutterResult?
-  private var previous: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+  private var previous: AudioPolicy?
+  private var restoring = false
   private var observers: [NSObjectProtocol] = []
 
   init(messenger: FlutterBinaryMessenger) {
@@ -67,7 +69,7 @@ final class LinkRemoteVoiceSession {
   }
 
   private func prepare(owner key: String, result: @escaping FlutterResult) {
-    guard owner == nil else {
+    guard owner == nil && !restoring else {
       result(FlutterError(code: "busy", message: "A voice call is already preparing or active", details: nil))
       return
     }
@@ -125,22 +127,37 @@ final class LinkRemoteVoiceSession {
     let callback = pendingResult
     pendingResult = nil
     callback?(FlutterError(code: "cancelled", message: "Voice call preparation cancelled", details: nil))
-    if let saved = previous {
-      do {
-        if deactivate {
-          try audio.setActive(false, options: .notifyOthersOnDeactivation)
-        }
-        try audio.setCategory(saved.0, mode: saved.1, options: saved.2)
-        if !deactivate { try audio.setActive(true) }
-      } catch {
-        // A capture stream may still be stopping in Rust; notify/close rather
-        // than silently reacquiring microphone access after an interruption.
-        NSLog("LinkRemote voice audio-session cleanup failed: %@", error.localizedDescription)
-      }
-    }
+    let saved = previous
     previous = nil
+    if let saved = saved {
+      restoring = true
+      restore(saved, token: generation, deactivate: deactivate, attempt: 0)
+    }
     if let reason = reason {
       channel.invokeMethod("interrupted", arguments: ["owner": key, "reason": reason])
+    }
+  }
+
+  private func restore(_ saved: AudioPolicy, token: UInt64, deactivate: Bool, attempt: Int) {
+    guard owner == nil && generation == token else { return }
+    do {
+      if deactivate {
+        try audio.setActive(false, options: .notifyOthersOnDeactivation)
+      }
+      try audio.setCategory(saved.0, mode: saved.1, options: saved.2)
+      if !deactivate { try audio.setActive(true) }
+      restoring = false
+    } catch {
+      // CPAL's cancelled stream may take a callback to finish shutting down.
+      // Retry cleanup briefly, never reacquire the microphone or restart a call.
+      if attempt < 3 {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+          self?.restore(saved, token: token, deactivate: deactivate, attempt: attempt + 1)
+        }
+      } else {
+        restoring = false
+        NSLog("LinkRemote voice audio-session cleanup failed: %@", error.localizedDescription)
+      }
     }
   }
 

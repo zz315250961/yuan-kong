@@ -7,6 +7,7 @@ let allDevices = [];
 let deviceRequest = 0;
 let hasLoadedDevices = false;
 let accountEmail = '';
+let accountRequest = 0;
 let announcementTimer;
 
 function announce(message = '', isError = false) {
@@ -17,6 +18,14 @@ function announce(message = '', isError = false) {
 }
 
 function showView(name, focus = true) {
+  if (name !== 'dashboard') {
+    ++accountRequest;
+    ++deviceRequest;
+    allDevices = [];
+    hasLoadedDevices = false;
+    deviceList.replaceChildren();
+    deviceCount.textContent = '';
+  }
   for (const view of views) view.hidden = view.dataset.view !== name;
   document.querySelectorAll('[data-dashboard-section]').forEach(button => {
     button.disabled = name !== 'dashboard';
@@ -30,6 +39,7 @@ function showView(name, focus = true) {
 }
 
 async function request(path, options = {}, redirectUnauthorized = true) {
+  const accountGeneration = accountRequest;
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 20000);
   try {
@@ -40,7 +50,7 @@ async function request(path, options = {}, redirectUnauthorized = true) {
       signal: controller.signal,
     });
     const body = await response.json().catch(() => ({}));
-    if (response.status === 401 && redirectUnauthorized && path !== '/remote/api/web/login') showView('login');
+    if (response.status === 401 && redirectUnauthorized && path !== '/remote/api/web/login' && accountGeneration === accountRequest) showView('login');
     if (!response.ok || body.error) {
       const error = new Error(body.error || `请求失败 (${response.status})，请重试`);
       error.status = response.status;
@@ -127,6 +137,8 @@ function renderDevice(device) {
   const status = document.createElement('span');
   status.className = 'device-status';
   status.textContent = '已绑定';
+  const controllerOnly = device.controller_only === true || ['ios', 'ipados'].includes(String(info.os || '').toLowerCase());
+  const canCopyId = Boolean(device.id) && !controllerOnly && device.can_connect !== false;
 
   const actions = document.createElement('div');
   actions.append(
@@ -139,26 +151,29 @@ function renderDevice(device) {
       }
     }),
     actionButton('移除', async button => {
+      const accountGeneration = accountRequest;
       if (!window.confirm('从当前账号的设备列表移除此记录？客户端再次登录或同步账号时，设备可能重新出现。')) return;
       button.disabled = true;
       try {
         await request(`/remote/api/peers/${encodeURIComponent(device.uuid)}`, {method: 'DELETE'});
+        if (accountGeneration !== accountRequest) return;
         allDevices = allDevices.filter(item => item.uuid !== device.uuid);
         renderDevices();
         announce('设备记录已移除');
         await loadDevices();
       } catch (error) {
-        announce(error.message, true);
+        if (accountGeneration === accountRequest) announce(error.message, true);
       } finally {
         button.disabled = false;
       }
     }, 'remove'),
   );
+  actions.querySelector('button').disabled = !canCopyId;
 
   row.append(
     tableCell('设备', name),
     tableCell('系统', info.os || '未知'),
-    tableCell('设备 ID', device.id || '—', 'device-id'),
+    tableCell('设备 ID', controllerOnly ? 'iOS 控制端（不提供被控 ID）' : device.id || '设备 ID 尚未就绪', 'device-id'),
     tableCell('状态', status),
     tableCell('最近登录', formatDate(device.last_login)),
     tableCell('操作', actions),
@@ -205,7 +220,8 @@ async function loadDevices() {
     hasLoadedDevices = true;
     renderDevices();
   } catch (error) {
-    if (requestId === deviceRequest && !hasLoadedDevices) showDeviceMessage('设备加载失败，请点击“刷新”重试。');
+    if (requestId !== deviceRequest) return;
+    if (!hasLoadedDevices) showDeviceMessage('设备加载失败，请点击“刷新”重试。');
     throw error;
   } finally {
     if (requestId === deviceRequest) {
@@ -228,7 +244,15 @@ function showDeviceMessage(message) {
 }
 
 async function loadDashboard({initial = false} = {}) {
-  const user = await request('/remote/api/currentUser', {method: 'POST', body: '{}'}, !initial);
+  const accountGeneration = ++accountRequest;
+  let user;
+  try {
+    user = await request('/remote/api/currentUser', {method: 'POST', body: '{}'}, !initial);
+  } catch (error) {
+    if (accountGeneration !== accountRequest) return;
+    throw error;
+  }
+  if (accountGeneration !== accountRequest) return;
   const email = user.email || user.name || '—';
   if (accountEmail !== email) {
     allDevices = [];
@@ -328,8 +352,13 @@ document.querySelector('#change-email-form').addEventListener('submit', event =>
   });
 });
 document.querySelector('#refresh-devices').addEventListener('click', async () => {
-  try { await loadDevices(); announce('设备列表已刷新'); }
-  catch (error) { announce(error.message, true); }
+  const accountGeneration = accountRequest;
+  try {
+    await loadDevices();
+    if (accountGeneration === accountRequest) announce('设备列表已刷新');
+  } catch (error) {
+    if (accountGeneration === accountRequest) announce(error.message, true);
+  }
 });
 document.querySelector('#logout-button').addEventListener('click', async () => {
   try {

@@ -196,4 +196,96 @@ void main() {
     expect(errors, isEmpty);
     await controller.stop();
   });
+
+  test('recreated coordinator cannot reuse a pending native owner key',
+      () async {
+    final permission = Completer<bool>();
+    var preparations = 0;
+    native = (call) async => call.method == 'prepare'
+        ? (++preparations == 1 ? permission.future : true)
+        : null;
+    final oldRequest = controller.request();
+    await Future<void>.delayed(Duration.zero);
+    controller.dispose();
+    await Future<void>.delayed(Duration.zero);
+    controller = IosVoiceCallCoordinator(
+      owner: 'test-session',
+      requestCall: () async => requests++,
+      closeCall: () async => closes++,
+      onError: errors.add,
+    );
+    expect(await controller.request(), isTrue);
+    final newOwner =
+        calls.lastWhere((call) => call.method == 'prepare').arguments['owner'];
+    permission.complete(true);
+    expect(await oldRequest, isFalse);
+    expect(calls.last.arguments['owner'], isNot(newOwner));
+    expect(requests, 1);
+  });
+
+  test('close acknowledgement fences redial without delaying native cleanup',
+      () async {
+    controller.dispose();
+    final acknowledged = Completer<void>();
+    controller = IosVoiceCallCoordinator(
+      owner: 'close-barrier',
+      requestCall: () async => requests++,
+      closeCall: () {
+        closes++;
+        return acknowledged.future;
+      },
+      onError: errors.add,
+    );
+    expect(await controller.request(), isTrue);
+    final stopping = controller.stop();
+    await Future<void>.delayed(Duration.zero);
+    expect(closes, 1);
+    expect(calls.last.method, 'end',
+        reason: 'Audio policy cleanup must not wait for queued Rust close');
+    expect(await controller.request(), isFalse);
+    // The old closed event precedes its acknowledgement on the same stream.
+    await controller.stop(sendClose: false);
+    expect(await controller.request(), isFalse);
+    acknowledged.complete();
+    await stopping;
+    expect(await controller.request(), isTrue);
+  });
+
+  test('cancel waits for request enqueue before sending its close', () async {
+    controller.dispose();
+    final enqueued = Completer<void>();
+    final acknowledged = Completer<void>();
+    var first = true;
+    controller = IosVoiceCallCoordinator(
+      owner: 'enqueue-order',
+      requestCall: () {
+        requests++;
+        if (first) {
+          first = false;
+          return enqueued.future;
+        }
+        return Future<void>.value();
+      },
+      closeCall: () {
+        closes++;
+        return acknowledged.future;
+      },
+      onError: errors.add,
+    );
+    final requesting = controller.request();
+    await Future<void>.delayed(Duration.zero);
+    final stopping = controller.stop();
+    await Future<void>.delayed(Duration.zero);
+    expect(closes, 0);
+    expect(calls.last.method, 'end');
+    expect(await controller.request(), isFalse);
+    enqueued.complete();
+    expect(await requesting, isFalse);
+    await Future<void>.delayed(Duration.zero);
+    expect(closes, 1);
+    expect(await controller.request(), isFalse);
+    acknowledged.complete();
+    await stopping;
+    expect(await controller.request(), isTrue);
+  });
 }

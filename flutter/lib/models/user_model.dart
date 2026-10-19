@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/hbbs/hbbs.dart';
 import 'package:flutter_hbb/models/ab_model.dart';
 import 'package:get/get.dart';
+import 'package:uuid/uuid.dart';
 
 import '../common.dart';
 import '../utils/http_service.dart' as http;
+import '../utils/account_device_sync.dart';
 import 'model.dart';
 import 'platform_model.dart';
 
@@ -20,6 +22,7 @@ class UserModel {
   final RxString avatar = ''.obs;
   final RxBool isAdmin = false.obs;
   final RxString networkError = ''.obs;
+  final RxString deviceSyncError = ''.obs;
   // True when networkError carries a server-reported error rather than a
   // connectivity failure; netWorkErrorWidget hides the network tip then.
   final RxBool networkErrorFromServer = false.obs;
@@ -39,6 +42,52 @@ class UserModel {
   }
 
   WeakReference<FFI> parent;
+  Timer? _deviceHeartbeat;
+  late final _deviceSync = AccountDeviceSync(
+      session: accountDeviceSession,
+      identity: _readAccountDevice,
+      post: (url, {headers, body}) =>
+          http.post(url, headers: headers, body: body));
+
+  Future<AccountDeviceSession> accountDeviceSession() async {
+    final token = bind.mainGetLocalOption(key: 'access_token');
+    final api =
+        await bind.mainGetApiServer().timeout(const Duration(seconds: 5));
+    return token == bind.mainGetLocalOption(key: 'access_token')
+        ? AccountDeviceSession(api, token)
+        : const AccountDeviceSession('', '');
+  }
+
+  Future<AccountDeviceIdentity> _readAccountDevice() async {
+    Map<String, dynamic> info = {};
+    try {
+      final value = jsonDecode(bind.mainGetLoginDeviceInfo());
+      if (value is Map<String, dynamic>) info = value;
+    } catch (_) {
+      debugPrint('Unable to read account device metadata');
+    }
+    final uuid = await accountInstallationUuid(await bind.mainGetUuid(),
+        readSaved: () => bind.mainGetLocalOption(key: 'account-device-uuid'),
+        save: (value) =>
+            bind.mainSetLocalOption(key: 'account-device-uuid', value: value),
+        create: () => const Uuid().v4());
+    return AccountDeviceIdentity(
+        accountRemoteId(await bind.mainGetMyId()), uuid, info);
+  }
+
+  void _startDeviceHeartbeat() {
+    if (isWeb || _deviceHeartbeat != null) return;
+    _deviceHeartbeat = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!isLogin) {
+        _deviceHeartbeat?.cancel();
+        _deviceHeartbeat = null;
+        return;
+      }
+      _deviceSync.sync().catchError((Object error) {
+        debugPrint('Account device registration failed: ${error.runtimeType}');
+      });
+    });
+  }
 
   UserModel(this.parent) {
     userName.listen((p0) {
@@ -61,17 +110,15 @@ class UserModel {
     }
     _updateLocalUserInfo();
     final url = await bind.mainGetApiServer();
-    final body = {
-      'id': await bind.mainGetMyId(),
-      'uuid': await bind.mainGetUuid(),
-      'deviceInfo': jsonDecode(bind.mainGetLoginDeviceInfo()),
-    };
+    final body = (await _readAccountDevice()).toJson();
+    if (token != bind.mainGetLocalOption(key: 'access_token')) return;
     if (refreshingUser) return;
     try {
       refreshingUser = true;
       final http.Response response;
       try {
-        response = await http.post(Uri.parse('$url/api/currentUser'),
+        response = await http.post(
+            accountDeviceRequestUri(url, '/api/currentUser'),
             headers: {
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $token'
@@ -83,6 +130,7 @@ class UserModel {
       }
       refreshingUser = false;
       final status = response.statusCode;
+      if (token != bind.mainGetLocalOption(key: 'access_token')) return;
       if (status == 401 || status == 400) {
         reset(resetOther: status == 401);
         return;
@@ -137,6 +185,9 @@ class UserModel {
   }
 
   Future<void> reset({bool resetOther = false}) async {
+    _deviceHeartbeat?.cancel();
+    _deviceHeartbeat = null;
+    deviceSyncError.value = '';
     await bind.mainSetLocalOption(key: 'access_token', value: '');
     await bind.mainSetLocalOption(key: 'user_info', value: '');
     if (resetOther) {
@@ -154,6 +205,7 @@ class UserModel {
     avatar.value = user.avatar;
     isAdmin.value = user.isAdmin;
     bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
+    _startDeviceHeartbeat();
     if (isWeb) {
       // ugly here, tmp solution
       bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
@@ -212,8 +264,7 @@ class UserModel {
 
   /// 忘记密码：验证码 + 新密码。
   /// throw [RequestException]
-  Future<void> resetPassword(
-      String email, String code, String password) async {
+  Future<void> resetPassword(String email, String code, String password) async {
     final url = await bind.mainGetApiServer();
     final resp = await http.post(Uri.parse('$url/api/reset-password'),
         body: jsonEncode({'email': email, 'code': code, 'password': password}));
@@ -259,11 +310,13 @@ class UserModel {
   /// 当前账号下所有设备（我的设备）。
   /// throw [RequestException]
   Future<List<Map<String, dynamic>>> getMyDevices() async {
-    final url = await bind.mainGetApiServer();
-    final resp = await http.get(
-      Uri.parse('$url/api/peers'),
-      headers: getHttpHeaders(),
-    );
+    deviceSyncError.value = '';
+    final resp = await _deviceSync.loadPeers(
+        (url, {headers}) => http.get(url, headers: headers),
+        syncDevice: !isWeb,
+        registrationError: (_) =>
+            deviceSyncError.value = '本机设备暂未同步，已保留其他设备列表；可稍后刷新重试。');
+    if (resp == null) return [];
     final Map<String, dynamic> body;
     try {
       body = jsonDecode(decode_http_response(resp));
@@ -285,13 +338,13 @@ class UserModel {
   }
 
   /// 删除当前账号下的设备记录。
-  Future<void> deleteMyDevice(String uuid) async {
-    final url = await bind.mainGetApiServer();
-    final resp = await http.delete(
-      Uri.parse('$url/api/peers/${Uri.encodeComponent(uuid)}'),
-      headers: getHttpHeaders(),
-    );
+  Future<bool> deleteMyDevice(String uuid,
+      {required AccountDeviceSession expectedSession}) async {
+    final resp = await _deviceSync.removePeer(uuid, expectedSession,
+        (url, {headers}) => http.delete(url, headers: headers));
+    if (resp == null) return false;
     _throwIfError(resp);
+    return true;
   }
 
   void _throwIfError(http.Response resp) {
@@ -316,6 +369,9 @@ class UserModel {
 
   Future<LoginResponse> _postAuth(
       String path, LoginRequest loginRequest) async {
+    final device = await _readAccountDevice();
+    loginRequest.id = accountRemoteId(loginRequest.id ?? device.id);
+    loginRequest.uuid = device.uuid;
     final url = await bind.mainGetApiServer();
     final resp = await http.post(Uri.parse('$url$path'),
         body: jsonEncode(loginRequest.toJson()));
@@ -324,7 +380,8 @@ class UserModel {
     try {
       body = jsonDecode(decode_http_response(resp));
     } catch (e) {
-      debugPrint("post auth $path: jsonDecode resp body failed: ${e.toString()}");
+      debugPrint(
+          "post auth $path: jsonDecode resp body failed: ${e.toString()}");
       if (resp.statusCode != 200) {
         BotToast.showText(
             contentColor: Colors.red, text: 'HTTP ${resp.statusCode}');

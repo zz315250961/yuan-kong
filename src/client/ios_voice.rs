@@ -21,10 +21,13 @@ use hbb_common::{
 };
 #[cfg(target_os = "ios")]
 use magnum_opus::{Application, Bitrate, Channels, Encoder};
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    mpsc::{Receiver, Sender, TryRecvError},
-    Arc,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc::{Receiver, Sender, TryRecvError},
+        Arc, Mutex, OnceLock, Weak,
+    },
 };
 #[cfg(target_os = "ios")]
 use std::{
@@ -56,6 +59,92 @@ struct PcmBlock {
 struct PendingStart {
     stop: Option<Sender<()>>,
     cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct OwnerState {
+    epoch: u64,
+    armed: bool,
+    started: bool,
+    cancelled: Weak<AtomicBool>,
+}
+
+fn owners() -> &'static Mutex<HashMap<usize, OwnerState>> {
+    static OWNERS: OnceLock<Mutex<HashMap<usize, OwnerState>>> = OnceLock::new();
+    OWNERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn advance_owner(state: &mut OwnerState, armed: bool) -> u64 {
+    if let Some(cancelled) = state.cancelled.upgrade() {
+        cancelled.store(true, Ordering::Release);
+    }
+    state.cancelled = Weak::new();
+    // u64::MAX is an exhausted, permanently invalid tombstone, not a reusable
+    // generation. This avoids wrapping a stale request back into validity.
+    state.epoch = state.epoch.saturating_add(1);
+    state.armed = armed && state.epoch != u64::MAX;
+    state.started = false;
+    state.epoch
+}
+
+/// UI intent is armed synchronously before its request enters the network I/O
+/// queue. The owner is an opaque shared-Arc address; it is never dereferenced.
+pub(crate) fn arm_owner(owner: usize) -> u64 {
+    // A poisoned registry still contains memory-safe weak entries. Recover it
+    // so poisoning cannot prevent a privacy-sensitive stop from taking effect.
+    let mut owners = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    advance_owner(owners.entry(owner).or_default(), true)
+}
+
+/// Stop capture independently of a congested peer.send / queued Close event.
+/// Retain the epoch even when no worker exists yet (cancel-before-accept).
+pub(crate) fn cancel_owner(owner: usize) {
+    let mut owners = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    advance_owner(owners.entry(owner).or_default(), false);
+}
+
+pub(crate) fn is_owner_current(owner: usize, epoch: u64) -> bool {
+    let owners = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    owners.get(&owner).map_or(false, |state| {
+        state.armed && epoch != 0 && epoch != u64::MAX && state.epoch == epoch
+    })
+}
+
+struct OwnerRegistration {
+    owner: usize,
+    epoch: u64,
+    cancelled: Weak<AtomicBool>,
+}
+
+fn register_owner(
+    owner: usize,
+    epoch: u64,
+    cancelled: &Arc<AtomicBool>,
+) -> Option<OwnerRegistration> {
+    let mut owners = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(state) = owners.get_mut(&owner) else {
+        cancelled.store(true, Ordering::Release);
+        return None;
+    };
+    if !state.armed || state.started || epoch == 0 || epoch == u64::MAX || state.epoch != epoch {
+        cancelled.store(true, Ordering::Release);
+        return None;
+    }
+    state.started = true;
+    state.cancelled = Arc::downgrade(cancelled);
+    Some(OwnerRegistration { owner, epoch, cancelled: state.cancelled.clone() })
+}
+
+impl Drop for OwnerRegistration {
+    fn drop(&mut self) {
+        let mut owners = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(state) = owners.get_mut(&self.owner) {
+            if state.epoch == self.epoch && Weak::ptr_eq(&state.cancelled, &self.cancelled) {
+                state.cancelled = Weak::new();
+                state.armed = false;
+            }
+        }
+    }
 }
 
 const MAX_PENDING_VOICE_MESSAGES: usize = 12;
@@ -102,59 +191,73 @@ impl Drop for PendingStart {
 }
 
 #[cfg(target_os = "ios")]
-pub async fn start(
+pub fn start(
     sender: UnboundedSender<Data>,
     request_timestamp: i64,
-) -> Result<Sender<()>, String> {
+    owner: usize,
+    epoch: u64,
+) -> impl std::future::Future<Output = Result<Sender<()>, String>> + Send {
     let (stop, stop_rx) = mpsc::channel();
     let (ready, ready_rx) = oneshot::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
+    // Eagerly register before returning the future: cancelling before the task's
+    // first poll must prevent its later device startup, not just its messages.
+    let registration = register_owner(owner, epoch, &cancelled);
     let worker_cancelled = cancelled.clone();
     let worker_sender = sender.clone();
     let mut pending = PendingStart {
         stop: Some(stop.clone()),
         cancelled,
     };
-    std::thread::Builder::new()
-        .name("linkremote-ios-voice".to_owned())
-        .spawn(move || {
-            let mut ready = Some(ready);
-            if let Err(reason) = record(
-                &worker_sender,
-                request_timestamp,
-                &stop_rx,
-                &worker_cancelled,
-                &mut ready,
-            ) {
-                log::warn!("iOS microphone uplink stopped: {}", reason);
-                if !stopped(&stop_rx, &worker_cancelled) {
-                    let _ = worker_sender.send(Data::IosVoiceFailed(request_timestamp, reason.clone()));
-                }
-                if let Some(ready) = ready.take() {
-                    let _ = ready.send(Err(reason));
-                }
-            }
-        })
-        .map_err(|error| {
-            let reason = format!("Failed to start iOS microphone worker: {}", error);
-            let _ = sender.send(Data::IosVoiceFailed(request_timestamp, reason.clone()));
-            reason
-        })?;
-
-    // No blocking receive, nested runtime, or device work on the Tokio thread.
-    let result = match tokio::time::timeout(STARTUP_TIMEOUT, ready_rx).await {
-        Ok(Ok(Ok(()))) => {
-            pending.stop.take();
-            Ok(stop)
+    async move {
+        let Some(registration) = registration else {
+            return Err("iOS voice request was cancelled before microphone startup".to_owned());
+        };
+        if pending.cancelled.load(Ordering::Acquire) || !is_owner_current(owner, epoch) {
+            return Err("iOS voice request was cancelled before microphone startup".to_owned());
         }
-        Ok(Ok(Err(reason))) => Err(reason),
-        Ok(Err(_)) => Err("iOS microphone startup was cancelled".to_owned()),
-        Err(_) => Err("Timed out waiting for iOS microphone audio".to_owned()),
-    };
-    if let Err(reason) = &result {
-        let _ = sender.send(Data::IosVoiceFailed(request_timestamp, reason.clone()));
+        std::thread::Builder::new()
+            .name("linkremote-ios-voice".to_owned())
+            .spawn(move || {
+                let _registration = registration;
+                let mut ready = Some(ready);
+                if let Err(reason) = record(
+                    &worker_sender,
+                    request_timestamp,
+                    &stop_rx,
+                    &worker_cancelled,
+                    &mut ready,
+                ) {
+                    log::warn!("iOS microphone uplink stopped: {}", reason);
+                    if !stopped(&stop_rx, &worker_cancelled) {
+                        let _ = worker_sender.send(Data::IosVoiceFailed(request_timestamp, reason.clone()));
+                    }
+                    if let Some(ready) = ready.take() {
+                        let _ = ready.send(Err(reason));
+                    }
+                }
+            })
+            .map_err(|error| {
+                let reason = format!("Failed to start iOS microphone worker: {}", error);
+                let _ = sender.send(Data::IosVoiceFailed(request_timestamp, reason.clone()));
+                reason
+            })?;
+
+        // No blocking receive, nested runtime, or device work on the Tokio thread.
+        let result = match tokio::time::timeout(STARTUP_TIMEOUT, ready_rx).await {
+            Ok(Ok(Ok(()))) => {
+                pending.stop.take();
+                Ok(stop)
+            }
+            Ok(Ok(Err(reason))) => Err(reason),
+            Ok(Err(_)) => Err("iOS microphone startup was cancelled".to_owned()),
+            Err(_) => Err("Timed out waiting for iOS microphone audio".to_owned()),
+        };
+        if let Err(reason) = &result {
+            let _ = sender.send(Data::IosVoiceFailed(request_timestamp, reason.clone()));
+        }
+        result
     }
-    result
 }
 
 #[cfg(test)]
@@ -342,6 +445,176 @@ mod tests {
             assert!(VoiceMessageCredit::reserve(&pending).is_none());
             assert_eq!(pending.load(Ordering::Acquire), count);
         }
+    }
+
+    fn test_owner() -> usize {
+        static NEXT_OWNER: AtomicUsize = AtomicUsize::new(10_000);
+        NEXT_OWNER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    #[test]
+    fn unarmed_owner_cannot_register_or_start_recording() {
+        let owner = test_owner();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        assert!(!is_owner_current(owner, 1));
+        assert!(register_owner(owner, 1, &cancelled).is_none());
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn arm_epoch_is_valid_until_cancel_even_without_a_worker() {
+        let owner = test_owner();
+        let epoch = arm_owner(owner);
+        assert_ne!(epoch, 0);
+        assert!(is_owner_current(owner, epoch));
+        cancel_owner(owner);
+        assert!(!is_owner_current(owner, epoch));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        assert!(register_owner(owner, epoch, &cancelled).is_none());
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn cancel_before_any_worker_keeps_a_tombstone_for_late_accept() {
+        let owner = test_owner();
+        cancel_owner(owner);
+        let tombstone = owners().lock().unwrap().get(&owner).unwrap().epoch;
+        assert!(!is_owner_current(owner, tombstone));
+        let next = arm_owner(owner);
+        assert!(next > tombstone);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        assert!(register_owner(owner, tombstone, &cancelled).is_none());
+        assert!(is_owner_current(owner, next));
+        cancel_owner(owner);
+    }
+
+    #[test]
+    fn same_owner_redial_cancels_old_worker_but_old_drop_preserves_new_generation() {
+        let owner = test_owner();
+        let old_epoch = arm_owner(owner);
+        let old_flag = Arc::new(AtomicBool::new(false));
+        let old_guard = register_owner(owner, old_epoch, &old_flag).unwrap();
+        let next_epoch = arm_owner(owner);
+        let next_flag = Arc::new(AtomicBool::new(false));
+        let next_guard = register_owner(owner, next_epoch, &next_flag).unwrap();
+        assert!(old_flag.load(Ordering::Acquire));
+        assert!(!next_flag.load(Ordering::Acquire));
+        drop(old_guard);
+        assert!(is_owner_current(owner, next_epoch));
+        cancel_owner(owner);
+        assert!(next_flag.load(Ordering::Acquire));
+        drop(next_guard);
+    }
+
+    #[test]
+    fn cancelling_one_session_owner_does_not_stop_another() {
+        let first = test_owner();
+        let second = test_owner();
+        let first_epoch = arm_owner(first);
+        let second_epoch = arm_owner(second);
+        let first_flag = Arc::new(AtomicBool::new(false));
+        let second_flag = Arc::new(AtomicBool::new(false));
+        let _first_guard = register_owner(first, first_epoch, &first_flag).unwrap();
+        let _second_guard = register_owner(second, second_epoch, &second_flag).unwrap();
+        cancel_owner(first);
+        assert!(first_flag.load(Ordering::Acquire));
+        assert!(!second_flag.load(Ordering::Acquire));
+        assert!(is_owner_current(second, second_epoch));
+        cancel_owner(second);
+    }
+
+    #[test]
+    fn worker_exit_clears_only_its_flag_but_retains_epoch_tombstone() {
+        let owner = test_owner();
+        let epoch = arm_owner(owner);
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = register_owner(owner, epoch, &flag).unwrap();
+        drop(guard);
+        assert!(!is_owner_current(owner, epoch));
+        let owners = owners().lock().unwrap();
+        let state = owners.get(&owner).unwrap();
+        assert_eq!(state.epoch, epoch);
+        assert!(state.cancelled.upgrade().is_none());
+    }
+
+    #[test]
+    fn owner_registry_retains_weak_flags_not_the_microphone_lifetime() {
+        let owner = test_owner();
+        let epoch = arm_owner(owner);
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = register_owner(owner, epoch, &flag).unwrap();
+        assert_eq!(Arc::strong_count(&flag), 1);
+        drop(flag);
+        assert!(owners().lock().unwrap().get(&owner).unwrap().cancelled.upgrade().is_none());
+        drop(guard);
+        assert!(!is_owner_current(owner, epoch));
+    }
+
+    #[test]
+    fn cancel_owner_stops_capture_while_network_future_remains_pending() {
+        let owner = test_owner();
+        let epoch = arm_owner(owner);
+        let flag = Arc::new(AtomicBool::new(false));
+        let _guard = register_owner(owner, epoch, &flag).unwrap();
+        let mut network = Box::pin(std::future::pending::<()>());
+        let waker = Waker::from(Arc::new(NoopWake));
+        let mut context = Context::from_waker(&waker);
+        assert_eq!(network.as_mut().poll(&mut context), Poll::Pending);
+        cancel_owner(owner);
+        assert!(flag.load(Ordering::Acquire));
+        assert!(!is_owner_current(owner, epoch));
+        assert_eq!(network.as_mut().poll(&mut context), Poll::Pending);
+    }
+
+    #[test]
+    fn eager_registration_can_be_cancelled_before_the_future_first_poll() {
+        let owner = test_owner();
+        let epoch = arm_owner(owner);
+        let flag = Arc::new(AtomicBool::new(false));
+        let registration = register_owner(owner, epoch, &flag).unwrap();
+        let (stop, receiver) = mpsc::channel();
+        let pending = PendingStart { stop: Some(stop), cancelled: flag.clone() };
+        let future = async move {
+            let _pending = pending;
+            let _registration = registration;
+            std::future::pending::<()>().await;
+        };
+        cancel_owner(owner);
+        assert!(flag.load(Ordering::Acquire));
+        drop(future);
+        assert_eq!(receiver.try_recv(), Ok(()));
+        assert!(!is_owner_current(owner, epoch));
+    }
+
+    #[test]
+    fn duplicate_start_for_the_same_arm_cannot_replace_its_active_flag() {
+        let owner = test_owner();
+        let epoch = arm_owner(owner);
+        let first_flag = Arc::new(AtomicBool::new(false));
+        let _guard = register_owner(owner, epoch, &first_flag).unwrap();
+        let duplicate_flag = Arc::new(AtomicBool::new(false));
+        assert!(register_owner(owner, epoch, &duplicate_flag).is_none());
+        assert!(duplicate_flag.load(Ordering::Acquire));
+        assert!(!first_flag.load(Ordering::Acquire));
+        cancel_owner(owner);
+        assert!(first_flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn exhausted_epoch_is_never_reused_or_wrapped_into_a_valid_request() {
+        let owner = test_owner();
+        owners().lock().unwrap().insert(owner, OwnerState {
+            epoch: u64::MAX - 1,
+            ..Default::default()
+        });
+        let epoch = arm_owner(owner);
+        assert_eq!(epoch, u64::MAX);
+        assert!(!is_owner_current(owner, epoch));
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(register_owner(owner, epoch, &flag).is_none());
+        cancel_owner(owner);
+        assert_eq!(arm_owner(owner), u64::MAX);
+        assert!(!is_owner_current(owner, u64::MAX));
     }
 }
 

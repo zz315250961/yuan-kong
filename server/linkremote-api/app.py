@@ -419,8 +419,13 @@ def upsert_device(
 ) -> None:
     """登录/注册时记录设备（同一账号同一 uuid 覆盖更新）。"""
     device_id = (device_id or "").strip()
+    if device_id in ("0", "NA", "null", "unknown"):
+        device_id = ""
     uuid = (uuid or "").strip()
-    if not device_id or not uuid:
+    # A controller-only iOS client, or a desktop/mobile client whose ID service
+    # is still starting, has an installation UUID before a remote-control ID.
+    # Do not silently discard its authenticated account-device registration.
+    if uuid in ("", "0", "NA", "null", "unknown"):
         return
     info = device_info if isinstance(device_info, dict) else {}
     os_name = str(info.get("os") or "")
@@ -430,9 +435,9 @@ def upsert_device(
         INSERT INTO devices (id, uuid, user_id, os, device_name, last_login)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, uuid) DO UPDATE SET
-            id = excluded.id,
-            os = excluded.os,
-            device_name = excluded.device_name,
+            id = CASE WHEN excluded.id != '' THEN excluded.id ELSE devices.id END,
+            os = CASE WHEN excluded.os != '' THEN excluded.os ELSE devices.os END,
+            device_name = CASE WHEN excluded.device_name != '' THEN excluded.device_name ELSE devices.device_name END,
             last_login = excluded.last_login
         """,
         (device_id, uuid, user_id, os_name, device_name, now_iso()),
@@ -830,6 +835,26 @@ class Handler(BaseHTTPRequestHandler):
             )
         self._send_json(user_to_payload(row))
 
+    def handle_device_heartbeat(self):
+        # Account ownership comes only from the authenticated session. Native
+        # service sysinfo/heartbeat bodies and claimed usernames are not proof.
+        row = self._auth_user()
+        if row is None:
+            return self._error(401, "登录已失效，请重新登录")
+        body = self._read_body()
+        device_id = body_text(body, "id").strip()
+        uuid = body_text(body, "uuid").strip()
+        info = body.get("deviceInfo", {})
+        if (uuid in ("", "0", "NA", "null", "unknown") or len(uuid) > 512 or len(device_id) > 256
+                or ("id" in body and not isinstance(body["id"], str))
+                or not isinstance(info, dict)
+                or any(not isinstance(info.get(key, ""), str)
+                       or len(info.get(key, "")) > 512 for key in ("os", "name"))):
+            return self._error(400, "设备登记信息无效，请重新登录后重试")
+        with db_connect() as conn:
+            upsert_device(conn, row["id"], device_id, uuid, info)
+        self._send_json({"ok": True})
+
     def handle_logout(self, web_session=False):
         token = self._session_token()
         if token:
@@ -857,16 +882,22 @@ class Handler(BaseHTTPRequestHandler):
             ).fetchall()
         data = []
         for r in rows:
+            device_id = r["id"].strip()
+            if device_id in ("0", "NA", "null", "unknown"):
+                device_id = ""
             info = {
                 "os": r["os"],
                 "device_name": r["device_name"],
             }
             data.append(
                 {
-                    "id": r["id"],
+                    "id": device_id,
                     "uuid": r["uuid"],
                     "info": info,
-                    "status": 1,
+                    # Binding/last login is not a live rendezvous presence probe.
+                    "status": None,
+                    "can_connect": bool(device_id) and r["os"].lower() not in ("ios", "ipados"),
+                    "controller_only": r["os"].lower() in ("ios", "ipados"),
                     "last_login": r["last_login"],
                     "user": user["email"],
                     "user_name": user["email"],
@@ -967,6 +998,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_login(web_session=True)
         if path == "/api/currentUser" and method == "POST":
             return self.handle_current_user()
+        if path == "/api/heartbeat" and method == "POST":
+            return self.handle_device_heartbeat()
         if path == "/api/logout" and method == "POST":
             return self.handle_logout()
         if path == "/api/web/logout" and method == "POST":

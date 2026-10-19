@@ -20,10 +20,6 @@ with tempfile.TemporaryDirectory() as temp:
     with app.db_connect() as conn:
         conn.execute('INSERT INTO users (email,password_hash,salt,created_at) VALUES (?,?,?,?)',
                      ('owner@example.test',app.hash_password('secret1','test'),'test',app.now_iso()))
-        user = conn.execute('SELECT id FROM users').fetchone()['id']
-        app.upsert_device(conn,user,'123456789','office/device + 1',
-                          {'os':'Windows','name':'办公室电脑 · ' + '超长设备名称' * 14})
-        app.upsert_device(conn,user,'987654321','android-test',{'os':'Android','name':'我的手机'})
     server = app.make_server(host='127.0.0.1', port=0)
     print('TEST_PORT=' + str(server.server_address[1]), flush=True)
     server.serve_forever()
@@ -33,6 +29,7 @@ async function main() {
   const python = process.env.LINKREMOTE_TEST_PYTHON || 'python';
   const server = spawn(python, ['-u', '-c', fixture, path.resolve(__dirname, '..')], {stdio: ['ignore', 'pipe', 'pipe']});
   let browser;
+  let diagnosticPage;
   let output = '';
   let errors = '';
   server.stdout.on('data', chunk => { output += chunk; });
@@ -51,9 +48,25 @@ async function main() {
     browser = await chromium.launch({headless: true, channel: process.env.LINKREMOTE_TEST_BROWSER || 'msedge'});
     const context = await browser.newContext({viewport: {width: 1440, height: 1000}});
     const page = await context.newPage();
+    diagnosticPage = page;
     const pageErrors = [];
     page.on('pageerror', error => pageErrors.push(error.message));
     const base = `http://127.0.0.1:${port}`;
+    const nativeLogin = async device => {
+      const response = await fetch(`${base}/api/login`, {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: 'owner@example.test', password: 'secret1', ...device})});
+      assert.equal(response.status, 200);
+      return (await response.json()).access_token;
+    };
+    // Real client login and authenticated late-ID registration, never direct DB upsert.
+    const desktopToken = await nativeLogin({id: '', uuid: 'office/device + 1',
+      deviceInfo: {os: 'windows', name: '办公室电脑 · ' + '超长设备名称'.repeat(14)}});
+    const heartbeat = await fetch(`${base}/api/heartbeat`, {method: 'POST',
+      headers: {'Content-Type': 'application/json', Authorization: `Bearer ${desktopToken}`},
+      body: JSON.stringify({id: '123456789', uuid: 'office/device + 1'})});
+    assert.equal(heartbeat.status, 200);
+    await nativeLogin({id: '987654321', uuid: 'android-test', deviceInfo: {os: 'android', name: '我的手机'}});
     await page.goto(`${base}/remote/manage`);
     await page.locator('#login-view').waitFor({state: 'visible'});
     const snapshots = process.env.LINKREMOTE_SCREENSHOT_DIR;
@@ -104,6 +117,16 @@ async function main() {
     await page.locator('#device-search').fill('does-not-exist');
     await page.getByText('没有匹配的设备。', {exact: true}).waitFor();
     await page.locator('#device-search').fill('');
+
+    await nativeLogin({id: '0', uuid: 'ios-controller', deviceInfo: {os: 'ios', name: 'iPhone 控制端'}});
+    await page.locator('#refresh-devices').click();
+    await page.getByText('3 台设备', {exact: true}).waitFor();
+    const iosRow = page.locator('#device-list tr').filter({hasText: 'iPhone 控制端'});
+    await iosRow.getByText('iOS 控制端（不提供被控 ID）', {exact: true}).waitFor();
+    assert.equal(await iosRow.getByRole('button', {name: '复制 ID', exact: true}).isDisabled(), true);
+    page.once('dialog', dialog => dialog.accept());
+    await iosRow.getByRole('button', {name: '移除', exact: true}).click();
+    await page.getByText('2 台设备', {exact: true}).waitFor();
 
     // Failed refresh keeps existing data and offers a retry.
     await page.route('**/remote/api/peers', route => route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({error: '设备服务暂不可用，请重试'})}));
@@ -165,6 +188,50 @@ async function main() {
     await page.locator('#login-form [name=password]').fill('resetsecret');
     await page.locator('#login-form [type=submit]').click();
     await page.locator('#dashboard-view').waitFor({state: 'visible'});
+    // A late old-account list (or 401) must not leak rows or log out the new account.
+    for (const oldStatus of [200, 401]) {
+      await page.locator('#logout-button').click();
+      await page.getByText('已安全退出', {exact: true}).waitFor();
+      await page.locator('#login-form [name=username]').fill('changed@example.test');
+      await page.locator('#login-form [name=password]').fill('secret1');
+      await page.locator('#login-form [type=submit]').click();
+      await page.getByText('1 台设备', {exact: true}).waitFor();
+      let release;
+      let markHeld;
+      let markFinished;
+      const held = new Promise(resolve => { markHeld = resolve; });
+      const released = new Promise(resolve => { release = resolve; });
+      const finished = new Promise(resolve => { markFinished = resolve; });
+      let first = true;
+      await page.route('**/remote/api/peers', async route => {
+        if (!first) return route.continue();
+        first = false;
+        const actual = await route.fetch();
+        const body = await actual.text();
+        markHeld();
+        await released;
+        await route.fulfill({status: oldStatus, contentType: 'application/json',
+          body: oldStatus === 200 ? body : JSON.stringify({error: '旧账号登录已失效'})});
+        markFinished();
+      });
+      await page.locator('#refresh-devices').click();
+      await held;
+      await page.locator('#logout-button').click();
+      await page.getByText('已安全退出', {exact: true}).waitFor();
+      await page.locator('#login-form [name=username]').fill('new@example.test');
+      await page.locator('#login-form [name=password]').fill('resetsecret');
+      await page.locator('#login-form [type=submit]').click();
+      await page.getByText('0 台设备', {exact: true}).waitFor();
+      release();
+      await finished;
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.locator('#dashboard-view').isVisible(), true);
+      assert.equal(await page.locator('#account-email').textContent(), 'new@example.test');
+      assert.equal(await page.locator('#device-count').textContent(), '0 台设备');
+      assert.equal(await page.locator('#device-list').textContent().then(text => text.includes('987654321')), false);
+      assert.equal(await page.locator('#live-status').textContent().then(text => text.includes('旧账号')), false);
+      await page.unroute('**/remote/api/peers');
+    }
     await page.locator('#logout-button').click();
     await page.getByText('已安全退出', {exact: true}).waitFor();
     for (const width of [1440, 1200, 1120, 900, 768, 390, 320]) {
@@ -173,7 +240,18 @@ async function main() {
       await capture(`login-${width}`);
     }
     assert.deepEqual(pageErrors, []);
-    console.log('PASS: keyboard skip navigation, login errors, cookie login/logout, device search/copy/delete/initial and refresh failure recovery, change email, registration, password reset, 320–1440px overflow, no browser exceptions');
+    console.log('PASS: real Windows/Android login + late-ID heartbeat, iOS controller-only list, account-switch late 200/401 isolation, keyboard skip navigation, cookie login/logout, search/copy/delete/failure recovery, email/register/reset, 320–1440px overflow, no browser exceptions');
+  } catch (error) {
+    if (diagnosticPage && !diagnosticPage.isClosed()) {
+      console.error('Browser failure state:', await diagnosticPage.evaluate(() => ({
+        account: document.querySelector('#account-email')?.textContent,
+        devices: document.querySelector('#device-count')?.textContent,
+        status: document.querySelector('#live-status')?.textContent,
+        visible: [...document.querySelectorAll('[data-view]')].filter(view => !view.hidden).map(view => view.dataset.view),
+      })).catch(() => ({})));
+    }
+    console.error('Temporary test server recent requests:', errors.slice(-3500));
+    throw error;
   } finally {
     clearTimeout(timeout);
     if (browser) await browser.close();

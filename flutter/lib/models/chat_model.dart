@@ -68,6 +68,8 @@ class ChatModel with ChangeNotifier {
 
   Rx<VoiceCallStatus> get voiceCallStatus => _voiceCallStatus;
   IosVoiceCallCoordinator? _iosVoiceCall;
+  Completer<void>? _iosVoiceCloseAck;
+  bool _voiceDisposed = false;
 
   TextEditingController textController = TextEditingController();
   RxInt mobileUnreadSum = 0.obs;
@@ -82,7 +84,9 @@ class ChatModel with ChangeNotifier {
 
   @override
   void dispose() {
+    _voiceDisposed = true;
     _iosVoiceCall?.dispose();
+    onVoiceCallCloseAck();
     textController.dispose();
     super.dispose();
   }
@@ -549,6 +553,25 @@ class ChatModel with ChangeNotifier {
     }
   }
 
+  void onVoiceCallCloseAck() {
+    final pending = _iosVoiceCloseAck;
+    _iosVoiceCloseAck = null;
+    if (pending != null && !pending.isCompleted) pending.complete();
+  }
+
+  Future<void> _closeIosVoiceCall() async {
+    // Rust emits this independent acknowledgement after clearing local voice
+    // state, after any old closed event, and before awaiting the network write.
+    final pending = _voiceDisposed ? null : Completer<void>();
+    _iosVoiceCloseAck = pending;
+    try {
+      await bind.sessionCloseVoiceCall(sessionId: sessionId);
+      if (pending != null && !_voiceDisposed) await pending.future;
+    } finally {
+      if (identical(_iosVoiceCloseAck, pending)) _iosVoiceCloseAck = null;
+    }
+  }
+
   void onVoiceCallIncoming() {
     if (isConnManager) {
       _voiceCallStatus.value = VoiceCallStatus.incoming;
@@ -556,6 +579,7 @@ class ChatModel with ChangeNotifier {
   }
 
   Future<void> requestVoiceCall() async {
+    if (_voiceDisposed) return;
     if (!isIOS) {
       await bind.sessionRequestVoiceCall(sessionId: sessionId);
       return;
@@ -563,7 +587,7 @@ class ChatModel with ChangeNotifier {
     _iosVoiceCall ??= IosVoiceCallCoordinator(
       owner: sessionId.toString(),
       requestCall: () => bind.sessionRequestVoiceCall(sessionId: sessionId),
-      closeCall: () => bind.sessionCloseVoiceCall(sessionId: sessionId),
+      closeCall: _closeIosVoiceCall,
       onError: (message) => showToast(message),
     );
     // RemoteIO provides duplex transport, not acoustic echo cancellation.

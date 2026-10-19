@@ -78,14 +78,34 @@ def smoke_device(device, app, output):
     udid = device["udid"]
     family = "iphone" if device["name"].startswith("iPhone") else "ipad"
     log_path = output / (family + ".log")
-    result = {"model": device["name"], "udid": udid, "screenshots": [], "passed": False,
+    result = {"model": device["name"], "udid": udid, "screenshots": [], "native_screenshots": [],
+              "passed": False,
               "url_delivery_verified": False, "url_delivery_status": "not_attempted"}
     log_process = None
     was_booted = device["state"] == "Booted"
+    stage_started = None
+
+    def finish_stage():
+        nonlocal stage_started
+        if stage_started is not None:
+            elapsed = time.monotonic() - stage_started
+            result.setdefault("stage_timings", []).append({
+                "stage": result["last_stage"], "elapsed_seconds": round(elapsed, 3)})
+            print(f"[ios-smoke] {device['name']}: completed {result['last_stage']} "
+                  f"in {elapsed:.2f}s", flush=True)
+            stage_started = None
 
     def stage(name):
+        nonlocal stage_started
+        finish_stage()
         result["last_stage"] = name
+        stage_started = time.monotonic()
         print(f"[ios-smoke] {device['name']}: {name}", flush=True)
+
+    def native_capture(state):
+        target = output / (family + "-native-" + state + ".png")
+        screenshot(udid, target)
+        result["native_screenshots"].append(target.name)
 
     def cleanup(name, action):
         try:
@@ -105,6 +125,27 @@ def smoke_device(device, app, output):
         stage("wait for runtime boot completion")
         simctl("bootstatus", udid, "-b", timeout=180)
         stage("set initial light appearance")
+        simctl("ui", udid, "appearance", "light")
+        # Safari's first cold launch can take longer than a Flutter Debug app's
+        # iOS background task allowance. Finish that work before the tested App
+        # ever starts; retain the strict original-App PID check after returning.
+        stage("prewarm native Safari before target app startup")
+        browser_started = time.monotonic()
+        result["safari_prewarm_launch"] = simctl("launch", udid, "com.apple.mobilesafari").strip()
+        result["safari_prewarm_launch_seconds"] = round(time.monotonic() - browser_started, 3)
+        time.sleep(2)
+        native_capture("safari-prewarmed")
+        stage("native Settings light control")
+        result["native_control_bundle"] = "com.apple.Preferences"
+        result["native_control_launch"] = simctl("launch", udid, "com.apple.Preferences").strip()
+        simctl("ui", udid, "appearance", "light")
+        time.sleep(2)
+        native_capture("settings-light")
+        stage("native Settings dark control")
+        simctl("ui", udid, "appearance", "dark")
+        time.sleep(2)
+        native_capture("settings-dark")
+        stage("restore light appearance before target app startup")
         simctl("ui", udid, "appearance", "light")
         stage("install app")
         simctl("install", udid, str(app))
@@ -130,7 +171,7 @@ def smoke_device(device, app, output):
                     result["url_delivery_status"] = "system_confirmation_requires_manual_verification"
                 elif state == "resumed":
                     simctl("ui", udid, "appearance", "light")
-                    simctl("launch", udid, "com.apple.mobilesafari")
+                    result["background_launch"] = simctl("launch", udid, "com.apple.mobilesafari").strip()
                     time.sleep(1)
                     result["resume_launch"] = simctl("launch", udid, BUNDLE).strip()
                 elif state == "home-dark":
@@ -153,6 +194,7 @@ def smoke_device(device, app, output):
                 raise RuntimeError("Startup or lifecycle error found in the Flutter/native log")
             result["passed"] = True
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+        finish_stage()
         result["error"] = str(error)
         result["failed_stage"] = result.get("last_stage")
         print(f"[ios-smoke] {device['name']}: failed: {error}", flush=True)
@@ -163,6 +205,7 @@ def smoke_device(device, app, output):
         except (RuntimeError, OSError, subprocess.SubprocessError) as capture_error:
             result["failure_screenshot_error"] = str(capture_error)
     finally:
+        finish_stage()
         if log_process is not None:
             def stop_log():
                 log_process.terminate()
@@ -249,7 +292,8 @@ def main():
                     smoke_device(device, args.app.resolve(), args.output.resolve())) for device in devices]
         report = {"runtime": runtime, "devices": results,
                   "device_source": "qa_created" if args.fresh_devices else "runner_inventory",
-                  "scope": "First native Flutter frame and original process survival, with light/dark and "
+                  "scope": "Native Safari/Settings control screenshots for manual comparison, followed by "
+                           "first native Flutter frame and original process survival, with light/dark and "
                            "foreground-return screenshots for manual inspection before requesting a URL. "
                            "URL delivery is not verified; system confirmation requires manual verification. "
                            "Does not validate live remote input, camera, cellular or device performance."}

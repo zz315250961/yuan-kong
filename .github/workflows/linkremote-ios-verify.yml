@@ -155,6 +155,25 @@ jobs:
           flutter-version: 3.24.5
           cache: true
 
+      - name: Typecheck native voice policy against the real iOS SDK
+        shell: bash
+        run: |
+          flutter precache --ios
+          simulator_framework="$(python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['FLUTTER_ROOT']) / 'bin/cache/artifacts/engine/ios/Flutter.xcframework'
+          frameworks = list(root.glob('*-simulator/Flutter.framework'))
+          if len(frameworks) != 1:
+              raise SystemExit('Expected exactly one native Simulator Flutter framework')
+          print(frameworks[0].parent)
+          PY
+          )"
+          xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
+            -target x86_64-apple-ios13.0-simulator \
+            -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            -F "$simulator_framework" flutter/ios/Runner/LinkRemoteVoiceSession.swift
+
       - name: Install Rust and iOS target
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -313,6 +332,7 @@ jobs:
         run: |
           python3 flutter/ios/simulator_smoke.py \
             --app flutter/build/ios/iphonesimulator/Runner.app \
+            --fresh-devices \
             --output flutter/build/ios/simulator-smoke-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload native simulator screenshots and logs

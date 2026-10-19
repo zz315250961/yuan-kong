@@ -93,7 +93,7 @@ pub mod file_trait;
 pub mod helper;
 pub mod io_loop;
 #[cfg(target_os = "ios")]
-mod ios_voice;
+pub(crate) mod ios_voice;
 #[cfg(target_os = "ios")]
 mod voice_packetizer;
 pub mod screenshot;
@@ -3892,6 +3892,8 @@ pub enum Data {
     ElevateDirect,
     ElevateWithLogon(String, String),
     NewVoiceCall,
+    #[cfg(target_os = "ios")]
+    IosNewVoiceCall(u64),
     CloseVoiceCall,
     #[cfg(target_os = "ios")]
     IosVoiceReady(i64, Result<std::sync::mpsc::Sender<()>, String>),

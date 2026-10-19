@@ -36,6 +36,7 @@ class IosVoiceCallCoordinator with WidgetsBindingObserver {
   static const _channel = MethodChannel(iosVoiceChannelName);
   static final _owners = <String, IosVoiceCallCoordinator>{};
   static bool _handlerInstalled = false;
+  static int _nextNativeOwner = 0;
 
   final String owner;
   final Future<void> Function() requestCall;
@@ -49,12 +50,15 @@ class IosVoiceCallCoordinator with WidgetsBindingObserver {
   bool _connected = false;
   Timer? _responseTimer;
   String? _nativeOwner;
+  Future<void>? _requestCallFuture;
 
   Future<bool> request() async {
     if (_disposed || _requesting || _active || _stopping) return false;
     _requesting = true;
     final generation = ++_generation;
-    final key = '$owner:$generation';
+    // A recreated page/coordinator may keep the same session ID. Its first
+    // generation must still differ from a late permission result on the old one.
+    final key = '$owner:${++_nextNativeOwner}:$generation';
     _nativeOwner = key;
     _owners[key] = this;
     try {
@@ -78,7 +82,13 @@ class IosVoiceCallCoordinator with WidgetsBindingObserver {
           unawaited(stop());
         }
       });
-      await requestCall();
+      final requesting = requestCall();
+      _requestCallFuture = requesting;
+      try {
+        await requesting;
+      } finally {
+        if (identical(_requestCallFuture, requesting)) _requestCallFuture = null;
+      }
       return !_disposed && generation == _generation;
     } on PlatformException catch (error) {
       if (!_disposed && generation == _generation) {
@@ -129,16 +139,38 @@ class IosVoiceCallCoordinator with WidgetsBindingObserver {
     final key = _nativeOwner;
     _nativeOwner = null;
     if (key != null) _owners.remove(key);
+    final requesting = _requestCallFuture;
+    final closing = active && sendClose
+        ? () async {
+            // FFI executes asynchronously: close must follow the original
+            // request enqueue, even when the user cancels before it returns.
+            if (requesting != null) {
+              try {
+                await requesting;
+              } catch (_) {
+                // Still attempt cleanup when the request transport failed.
+              }
+            }
+            try {
+              // This future includes the local I/O-loop acknowledgement, not
+              // just FFI enqueue. Keep redial fenced until old UI events drain.
+              await closeCall();
+            } catch (_) {
+              // A disconnected remote cannot justify retaining audio access.
+            }
+          }()
+        : null;
     try {
-      if (active && sendClose) {
+      // Native cleanup must not wait for I/O-loop progress or network writes.
+      if (key != null) await _endNative(key);
+      if (closing != null) {
         try {
-          await closeCall();
+          await closing;
         } catch (_) {
-          // A disconnected remote does not justify retaining microphone access.
+          // Teardown remains safe if a transport implementation throws.
         }
       }
     } finally {
-      if (key != null) await _endNative(key);
       _stopping = false;
     }
   }

@@ -430,6 +430,8 @@ class FfiModel with ChangeNotifier {
         // Voice call is closed with reason.
         final reason = evt['reason'].toString();
         parent.target?.chatModel.onVoiceCallClosed(reason);
+      } else if (name == 'on_voice_call_close_ack') {
+        parent.target?.chatModel.onVoiceCallCloseAck();
       } else if (name == 'on_voice_call_incoming') {
         // Voice call is requested by the peer.
         parent.target?.chatModel.onVoiceCallIncoming();

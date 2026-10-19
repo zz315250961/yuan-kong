@@ -1405,6 +1405,8 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn close(&self) {
+        #[cfg(target_os = "ios")]
+        crate::client::ios_voice::cancel_owner(Arc::as_ptr(&self.sender) as usize);
         self.send(Data::Close);
     }
 
@@ -1597,11 +1599,19 @@ impl<T: InvokeUiSession> Session<T> {
     pub fn request_voice_call(&self) {
         #[cfg(target_os = "linux")]
         std::thread::spawn(crate::ipc::start_pa);
+        #[cfg(target_os = "ios")]
+        {
+            let epoch = crate::client::ios_voice::arm_owner(Arc::as_ptr(&self.sender) as usize);
+            self.send(Data::IosNewVoiceCall(epoch));
+        }
+        #[cfg(not(target_os = "ios"))]
         self.send(Data::NewVoiceCall);
     }
 
     #[inline]
     pub fn close_voice_call(&self) {
+        #[cfg(target_os = "ios")]
+        crate::client::ios_voice::cancel_owner(Arc::as_ptr(&self.sender) as usize);
         self.send(Data::CloseVoiceCall);
     }
 
@@ -1731,6 +1741,8 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
     fn portable_service_running(&self, running: bool);
     fn on_voice_call_started(&self);
     fn on_voice_call_closed(&self, reason: &str);
+    #[cfg(target_os = "ios")]
+    fn on_voice_call_close_ack(&self) {}
     fn on_voice_call_waiting(&self);
     fn on_voice_call_incoming(&self);
     fn get_rgba(&self, display: usize) -> *const u8;

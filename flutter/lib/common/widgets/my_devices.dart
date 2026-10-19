@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../common.dart';
 import '../../models/platform_model.dart';
+import '../../utils/account_device_sync.dart';
 import 'dialog.dart';
 
 Future<void> showMyDevicesDialog() async {
@@ -31,6 +34,10 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
   Object? _error;
   var _loading = true;
   var _myId = '';
+  var _myUuid = '';
+  int _loadGeneration = 0;
+  StreamSubscription? _accountSubscription;
+  AccountDeviceSession? _loadedSession;
   var _requestInProgress = false;
   var _openingConnection = false;
   final _removing = <String>{};
@@ -38,12 +45,25 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
   @override
   void initState() {
     super.initState();
+    _accountSubscription = gFFI.userModel.userName.listen((_) {
+      if (!mounted) return;
+      ++_loadGeneration;
+      _requestInProgress = false;
+      _removing.clear();
+      setState(() {
+        _devices = [];
+        _loadedSession = null;
+        _error = null;
+      });
+      unawaited(_load());
+    });
     _init();
   }
 
   Future<void> _init() async {
     try {
       _myId = (await bind.mainGetMyId()).replaceAll(' ', '');
+      _myUuid = await bind.mainGetUuid();
     } catch (e) {
       debugPrint('my devices: get my id failed: $e');
     }
@@ -68,21 +88,26 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
       _error = null;
     });
     _requestInProgress = true;
+    final generation = ++_loadGeneration;
     try {
+      final account = await gFFI.userModel.accountDeviceSession();
       final devices = await gFFI.userModel.getMyDevices();
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
+      final current = await _sameSession(account);
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _devices = devices;
+        _devices = current ? devices : [];
+        _loadedSession = current ? account : null;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = e;
         _loading = false;
       });
     } finally {
-      _requestInProgress = false;
+      if (generation == _loadGeneration) _requestInProgress = false;
     }
   }
 
@@ -98,12 +123,30 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
     return const Icon(Icons.devices);
   }
 
-  bool _isSelf(String id) {
+  bool _isSelf(String id, [String uuid = '']) {
     final normalized = id.replaceAll(' ', '');
-    return _myId.isNotEmpty && normalized == _myId;
+    return (uuid.isNotEmpty && uuid == _myUuid) ||
+        (_myId.isNotEmpty && normalized == _myId);
+  }
+
+  Future<bool> _sameSession(AccountDeviceSession account) async {
+    try {
+      return account.matches(await gFFI.userModel.accountDeviceSession());
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _deleteDevice(Map<String, dynamic> device) async {
+    final generation = _loadGeneration;
+    final account = _loadedSession;
+    if (account == null ||
+        !await _sameSession(account) ||
+        !mounted ||
+        generation != _loadGeneration ||
+        account.token.isEmpty) {
+      return;
+    }
     final uuid = (device['uuid'] ?? '').toString();
     final id = (device['id'] ?? '').toString();
     final info = (device['info'] is Map<String, dynamic>)
@@ -115,19 +158,29 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
       gFFI.dialogManager,
       '${translate('Remove device')}：${name.isEmpty ? id : name}?',
       () async {
-        if (!mounted || _removing.contains(uuid)) return;
+        if (!mounted ||
+            generation != _loadGeneration ||
+            _removing.contains(uuid)) return;
+        if (!await _sameSession(account) ||
+            !mounted ||
+            generation != _loadGeneration) return;
         setState(() => _removing.add(uuid));
         try {
-          await gFFI.userModel.deleteMyDevice(uuid);
-          if (mounted) {
+          final removed = await gFFI.userModel
+              .deleteMyDevice(uuid, expectedSession: account);
+          if (removed && mounted && generation == _loadGeneration) {
             setState(() {
               _devices.removeWhere((d) => (d['uuid'] ?? '').toString() == uuid);
             });
           }
-          showToast(translate('Removed'));
+          if (removed && mounted && generation == _loadGeneration) {
+            showToast(translate('Removed'));
+          }
         } catch (e) {
           debugPrint('my devices: remove failed: $e');
-          showToast(translate('Failed'));
+          if (mounted && generation == _loadGeneration) {
+            showToast(translate('Failed'));
+          }
         } finally {
           if (mounted) {
             setState(() => _removing.remove(uuid));
@@ -139,6 +192,8 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
 
   Future<void> _connectDevice(String id) async {
     if (!mounted || id.trim().isEmpty || _openingConnection) return;
+    final account = _loadedSession;
+    if (account == null || !await _sameSession(account) || !mounted) return;
     if (_isSelf(id)) {
       showToast(translate('Cannot connect to self'));
       return;
@@ -149,6 +204,12 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
     } finally {
       _openingConnection = false;
     }
+  }
+
+  @override
+  void dispose() {
+    _accountSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -193,6 +254,13 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                 size: 36, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 12),
             Text(translate('No devices yet'), textAlign: TextAlign.center),
+            if (gFFI.userModel.deviceSyncError.value.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(gFFI.userModel.deviceSyncError.value,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ),
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: _load,
@@ -206,6 +274,11 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (gFFI.userModel.deviceSyncError.value.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(gFFI.userModel.deviceSyncError.value,
+                  style: Theme.of(context).textTheme.bodySmall)),
         Align(
           alignment: Alignment.centerRight,
           child: IconButton(
@@ -225,11 +298,18 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                   : <String, dynamic>{};
               final name = (info['device_name'] ?? '').toString();
               final os = (info['os'] ?? '').toString();
-              final id = (d['id'] ?? '').toString();
+              final id = accountRemoteId((d['id'] ?? '').toString());
               final uuid = (d['uuid'] ?? '').toString();
-              final self = _isSelf(id);
+              final lastLogin =
+                  DateTime.tryParse((d['last_login'] ?? '').toString());
+              final self = _isSelf(id, uuid);
+              final controllerOnly = d['controller_only'] == true ||
+                  os.toLowerCase() == 'ios' ||
+                  os.toLowerCase() == 'ipados';
+              final canConnect =
+                  id.isNotEmpty && !controllerOnly && d['can_connect'] != false;
               final removing = _removing.contains(uuid);
-              final VoidCallback? onConnect = self || id.isEmpty || removing
+              final VoidCallback? onConnect = self || !canConnect || removing
                   ? null
                   : () => _connectDevice(id);
               return Card(
@@ -249,7 +329,9 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  name.isEmpty ? id : name,
+                                  name.isEmpty
+                                      ? (id.isEmpty ? '未命名设备' : id)
+                                      : name,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -257,15 +339,27 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  self
-                                      ? '$id（${translate('This device')}）'
-                                      : id,
+                                  controllerOnly
+                                      ? 'iOS 控制端（不提供被控 ID）'
+                                      : id.isEmpty
+                                          ? '设备 ID 尚未就绪'
+                                          : self
+                                              ? '$id（${translate('This device')}）'
+                                              : id,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
                                 if (os.isNotEmpty)
                                   Text(os,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall),
+                                if (lastLogin != null)
+                                  Text(
+                                      '最近登录：${lastLogin.toLocal().toString().split('.').first}',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: Theme.of(context)
@@ -301,6 +395,10 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                               icon: const Icon(Icons.more_vert),
                               onSelected: (action) async {
                                 if (action == 'copy') {
+                                  final account = _loadedSession;
+                                  if (account == null ||
+                                      !await _sameSession(account) ||
+                                      !mounted) return;
                                   await Clipboard.setData(
                                       ClipboardData(text: id));
                                   showToast(translate('Copied'));
@@ -311,7 +409,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                               itemBuilder: (context) => [
                                 PopupMenuItem(
                                     value: 'copy',
-                                    enabled: id.isNotEmpty,
+                                    enabled: canConnect,
                                     child:
                                         Text(translate('Copy to clipboard'))),
                                 PopupMenuItem(

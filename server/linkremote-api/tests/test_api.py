@@ -188,6 +188,102 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(raw)["access_token"])
 
+    def test_two_native_logins_without_ready_remote_ids_appear_in_account_and_web(self):
+        self.seed_user("owner@example.test")
+        tokens = []
+        for uuid, os_name, name in (("desktop-install", "windows", "Office PC"),
+                                    ("phone-install", "ios", "iPhone controller")):
+            status, _, raw = self.request("POST", "/api/login", {
+                "username": "owner@example.test", "password": "secret1",
+                "id": "", "uuid": uuid,
+                "deviceInfo": {"os": os_name, "name": name, "type": "client"},
+            })
+            self.assertEqual(status, 200)
+            tokens.append(json.loads(raw)["access_token"])
+        for token in tokens:
+            status, _, raw = self.request("GET", "/api/peers", headers={
+                "Authorization": f"Bearer {token}",
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual({d["uuid"] for d in json.loads(raw)["data"]},
+                             {"desktop-install", "phone-install"})
+        cookie = self.web_login("owner@example.test")
+        status, _, raw = self.request("GET", "/remote/api/peers", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(raw)["data"]), 2)
+
+    def test_authenticated_device_heartbeat_updates_login_device_without_manual_upsert(self):
+        self.seed_user("owner@example.test")
+        tokens = []
+        for remote_id, uuid, os_name in (("111111111", "desktop-install", "windows"),
+                                        ("222222222", "android-install", "android")):
+            status, _, raw = self.request("POST", "/api/login", {
+                "username": "owner@example.test", "password": "secret1",
+                "id": remote_id, "uuid": uuid,
+                "deviceInfo": {"os": os_name, "name": uuid, "type": "client"},
+            })
+            self.assertEqual(status, 200)
+            tokens.append(json.loads(raw)["access_token"])
+        status, _, _ = self.request("POST", "/api/heartbeat?account_device_request=12", {
+            "id": "333333333", "uuid": "desktop-install",
+            "deviceInfo": {"os": "windows", "name": "Renamed PC", "type": "client"},
+        }, {"Authorization": f"Bearer {tokens[0]}"})
+        self.assertEqual(status, 200)
+        status, _, raw = self.request("GET", "/api/peers?account_device_request=13", headers={
+            "Authorization": f"Bearer {tokens[1]}",
+        })
+        rows = {row["uuid"]: row for row in json.loads(raw)["data"]}
+        self.assertEqual(status, 200)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows["desktop-install"]["id"], "333333333")
+        self.assertEqual(rows["desktop-install"]["info"]["device_name"], "Renamed PC")
+        auth = {"Authorization": f"Bearer {tokens[0]}"}
+        self.assertEqual(self.request("POST", "/remote/api/currentUser?account_device_request=14",
+                                      {"uuid": "desktop-install", "id": "333333333"}, auth)[0], 200)
+        self.assertEqual(self.request("DELETE", "/remote/api/peers/desktop-install?account_device_request=15",
+                                      headers=auth)[0], 200)
+        status, _, raw = self.request("GET", "/api/peers?account_device_request=16", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual([row["uuid"] for row in json.loads(raw)["data"]], ["android-install"])
+
+    def test_heartbeat_auth_scope_empty_updates_and_controller_role(self):
+        tokens = {}
+        for email, uuid, remote_id, os_name in (
+                ("owner@example.test", "private-install", "111111111", "windows"),
+                ("other@example.test", "other-install", "222222222", "android")):
+            self.seed_user(email)
+            status, _, raw = self.request("POST", "/api/login", {
+                "username": email, "password": "secret1", "id": remote_id,
+                "uuid": uuid, "deviceInfo": {"os": os_name, "name": email},
+            })
+            self.assertEqual(status, 200)
+            tokens[email] = json.loads(raw)["access_token"]
+        owner = {"Authorization": f"Bearer {tokens['owner@example.test']}"}
+        other = {"Authorization": f"Bearer {tokens['other@example.test']}"}
+        payload = {"id": "999999999", "uuid": "private-install", "username": "owner@example.test",
+                   "deviceInfo": {"os": "ios", "name": "Other account claim"}}
+        self.assertEqual(self.request("POST", "/api/heartbeat", payload)[0], 401)
+        self.assertEqual(self.request("POST", "/api/sysinfo", payload)[0], 404)
+        self.assertEqual(self.request("POST", "/api/heartbeat", payload, other)[0], 200)
+        status, _, raw = self.request("GET", "/api/peers", headers=owner)
+        owner_rows = json.loads(raw)["data"]
+        self.assertEqual(status, 200)
+        self.assertEqual(len(owner_rows), 1)
+        self.assertEqual(owner_rows[0]["id"], "111111111")
+        self.assertEqual(owner_rows[0]["info"]["device_name"], "owner@example.test")
+        self.assertIsNone(owner_rows[0]["status"])
+        self.assertTrue(owner_rows[0]["can_connect"])
+        self.assertEqual(self.request("POST", "/api/heartbeat", {"id": "", "uuid": "private-install"}, owner)[0], 200)
+        self.assertEqual(json.loads(self.request("GET", "/api/peers", headers=owner)[2])["data"][0]["id"], "111111111")
+        rows = json.loads(self.request("GET", "/api/peers", headers=other)[2])["data"]
+        ios = next(row for row in rows if row["uuid"] == "private-install")
+        self.assertTrue(ios["controller_only"])
+        self.assertFalse(ios["can_connect"], "Even a nonempty iOS ID is not a controllable host")
+        for invalid in ({"uuid": ""}, {"uuid": "0"}, {"uuid": "unknown"},
+                        {"uuid": ["wrong"]}, {"uuid": "install", "id": []},
+                        {"uuid": "install", "deviceInfo": []}):
+            self.assertEqual(self.request("POST", "/api/heartbeat", invalid, owner)[0], 400)
+
     def test_web_register_sets_cookie_without_exposing_token(self):
         self.seed_verification_code("new@example.test", "123456", "register")
         status, headers, raw = self.request(
