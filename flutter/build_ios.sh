@@ -40,26 +40,34 @@ fi
 
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_root"
-python3 flutter/ios/verify_controller.py
-(cd flutter && flutter pub get)
+build_log_dir="$project_root/flutter/build/linkremote-ios-logs"
+mkdir -p "$build_log_dir"
+build_log="$build_log_dir/$rust_target-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}.log"
+# Capture only build output. pipefail preserves errors from codegen, Cargo and
+# Flutter while the workflow can upload this file before cache post-processing.
+python3 flutter/ios/verify_controller.py 2>&1 | tee "$build_log"
+(cd flutter && flutter pub get) 2>&1 | tee -a "$build_log"
 # Generate on every build so a clean checkout and changed FFI declarations work.
 flutter_rust_bridge_codegen \
   --rust-input ./src/flutter_ffi.rs \
   --dart-output ./flutter/lib/generated_bridge.dart \
   --c-output ./flutter/ios/Runner/bridge_generated.h \
-  --class-name Rustdesk
+  --class-name Rustdesk 2>&1 | tee -a "$build_log"
 SDKROOT="$(xcrun --sdk "$apple_sdk" --show-sdk-path)" \
   IPHONEOS_DEPLOYMENT_TARGET=13.0 \
-  cargo build --locked --features "$rust_features" --release --target "$rust_target" --lib
+  cargo build --locked --features "$rust_features" --release --target "$rust_target" --lib \
+    2>&1 | tee -a "$build_log"
 cd flutter
 
 if [[ "${1:-}" == "--simulator" ]]; then
-  flutter build ios --simulator --debug --no-codesign
-  python3 ios/verify_controller.py --app build/ios/iphonesimulator/Runner.app --simulator
+  flutter build ios --simulator --debug --no-codesign 2>&1 | tee -a "$build_log"
+  python3 ios/verify_controller.py --app build/ios/iphonesimulator/Runner.app --simulator \
+    2>&1 | tee -a "$build_log"
 elif [[ "${1:-}" == "--unsigned" ]]; then
-  flutter build ios --release --no-codesign
-  python3 ios/verify_controller.py --app build/ios/iphoneos/Runner.app
+  flutter build ios --release --no-codesign 2>&1 | tee -a "$build_log"
+  python3 ios/verify_controller.py --app build/ios/iphoneos/Runner.app 2>&1 | tee -a "$build_log"
 else
-  flutter build ipa --release --export-options-plist=ios/exportOptions.plist
-  python3 ios/verify_controller.py --app build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app
+  flutter build ipa --release --export-options-plist=ios/exportOptions.plist 2>&1 | tee -a "$build_log"
+  python3 ios/verify_controller.py --app build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app \
+    2>&1 | tee -a "$build_log"
 fi

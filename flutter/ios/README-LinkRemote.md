@@ -11,6 +11,8 @@ cargo install cargo-expand --version 1.0.95 --locked
 cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
 ```
 
+Intel 主机还需 NASM **2.16.03** 与 `pkg-config`。本仓库固定的 AOM 版本通过 `nasm -hf` 检测 `-Ox`，NASM 3 改变帮助布局会触发错误的“不支持 multipass optimization”判断。CI 的 `Install native build tools` 步骤从[官方源码](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz)构建 2.16.03，并核对固定 SHA-256 `1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148`；本地应让同版本 `nasm` 位于 PATH 前面，不通过禁用汇编优化规避检测。`nasm -v` 应显示 2.16.03，`nasm -hf` 应包含 `-Ox`。
+
 仓库根目录执行：
 
 ```bash
@@ -30,6 +32,15 @@ python3 flutter/ios/verify_controller.py --app flutter/build/ios/iphoneos/Runner
 
 手动触发 `.github/workflows/linkremote-ios-verify.yml` 可在 macOS 完整构建；工作流会上传经过校验的 `linkremote-ios-unsigned.zip`，保留 `.app` 内文件的执行权限。构建成功不能替代签名、连接功能和真机性能验收。
 
+工作流的 `build_target` 可选 `both`、`device`、`simulator`，默认并行检查两个目标。单项重试不需要停止另一个正在运行的任务。例如对当前验证分支触发两目标检查：
+
+```bash
+gh workflow run linkremote-ios-verify.yml --repo zz315250961/yuan-kong \
+  --ref fix/mobile-controls-ios-1.0.43 -f build_target=both
+```
+
+只检查设备或模拟器时分别改为 `-f build_target=device` 或 `-f build_target=simulator`，`--ref` 选实际待验收的分支。该工作流构建与检查产物，不部署生产服务或发布签名 IPA。
+
 ## 无开发者账号的模拟器验证
 
 CI 显式使用 `macos-15-intel` 与已安装的 Xcode 16.4（iOS 18.5 SDK），避免默认 `macos-15` 标签切换 CPU 后把 x86_64 Simulator 静态库与 arm64 设备库混用。Rust 目标为 `x86_64-apple-ios`，vcpkg 使用固定基线已有的 `x64-ios` triplet（它的工具链选择 `iphonesimulator` SDK）。Runner 的链接目录由 `Flutter/NativeCore.xcconfig` 按 SDK 选择。设备构建继续使用 `aarch64-apple-ios`，两者的 `.a` 文件分别存放。
@@ -40,12 +51,15 @@ CI 显式使用 `macos-15-intel` 与已安装的 Xcode 16.4（iOS 18.5 SDK），
 rustup target add x86_64-apple-ios
 "$VCPKG_ROOT/vcpkg" install --classic \
   aom:x64-ios libjpeg-turbo:x64-ios opus:x64-ios libvpx:x64-ios libyuv:x64-ios \
+  aom:x64-osx libjpeg-turbo:x64-osx opus:x64-osx libvpx:x64-osx libyuv:x64-osx \
   --overlay-ports="$PWD/res/vcpkg" --x-install-root="$VCPKG_ROOT/installed"
 ./flutter/build_ios.sh --simulator
 python3 flutter/ios/simulator_smoke.py \
   --app flutter/build/ios/iphonesimulator/Runner.app \
   --output flutter/build/ios/simulator-smoke
 ```
+
+`x64-ios` 是实际 Simulator 依赖，`x64-osx` 是同一 Intel 主机生成 Rust 桥接时需要的 host 依赖，两者分目录安装。仓库的 libvpx overlay 在严格 `x64-ios` 条件下选择上游真实的 `x86_64-iphonesimulator-gcc` target；设备 arm/arm64 仍沿用原路径。
 
 烟测选择与当前 Xcode Simulator SDK 版本相同的已安装 iOS runtime 下的 iPhone 与 iPad，分别启动 App，等待原生首个 Flutter 画面回调，检查暖启动空深链和切后台再返回，抓取浅/深色原生截图及日志，确认原进程仍在运行。CI 产物 `linkremote-ios-simulator-evidence` 包含 `report.json`、PNG 与进程/应用日志。启动成功只覆盖上述范围，截图还需要人工观察布局，不能由模拟器推断真实远程控制、摄像头、蜂窝网络、温度和帧率已通过。
 

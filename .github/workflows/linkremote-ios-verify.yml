@@ -140,6 +140,14 @@ jobs:
         shell: bash
         run: ./flutter/build_ios.sh --simulator
 
+      - name: Upload per-target build diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linkremote-ios-${{ matrix.mode }}-build-log-${{ github.run_attempt }}
+          path: flutter/build/linkremote-ios-logs/*.log
+          if-no-files-found: warn
+
       - name: Verify native iPhone and iPad UI
         if: matrix.mode == 'simulator'
         shell: bash
