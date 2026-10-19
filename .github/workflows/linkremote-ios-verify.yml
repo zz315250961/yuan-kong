@@ -4,16 +4,112 @@ on:
   workflow_dispatch:
     inputs:
       build_target:
-        description: Verify both targets, or retry one independently
+        description: Build targets, or replay an exact Simulator App on clean runners
         type: choice
-        options: [both, device, simulator]
+        options: [both, device, simulator, simulator-ui-replay]
         default: both
+      simulator_source_run:
+        description: UI replay only - exact source run ID (not a new App build)
+        default: '39238496370'
+      simulator_source_commit:
+        description: UI replay only - exact source commit
+        default: '295030cdeabed4ef553199d165042095b955aa51'
+      simulator_source_artifact:
+        description: UI replay only - exact artifact name in the source run
+        default: 'linkremote-ios-simulator-app-1'
+      simulator_archive_sha256:
+        description: UI replay only - SHA-256 of the original inner App ZIP
+        default: '7135bff17972ebccd90c4a9f34515dfadb8a2044ab2d0be76daa592f727b2ff4'
+      simulator_app_version:
+        description: UI replay only - version of the selected historical App
+        default: '1.0.43'
+      simulator_app_build:
+        description: UI replay only - build number of the selected historical App
+        default: '75'
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  ios-simulator-ui-replay:
+    if: inputs.build_target == 'simulator-ui-replay'
+    name: ios-ui-replay-${{ matrix.family }}
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [iphone, ipad]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      REPLAY_EVIDENCE: flutter/build/ios/simulator-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}
+    steps:
+      - name: Checkout only the UI harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Verify clean runner and source-gate regressions
+        shell: bash
+        run: |
+          test "$(uname -m)" = x86_64
+          xcodebuild -version
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = 18.5
+          sysctl hw.memsize hw.logicalcpu
+          vm_stat
+          df -h
+          xcrun simctl list devices booted
+          python3 -m unittest discover -s flutter/ios -p 'test_simulator_smoke.py' -v
+          python3 -m unittest discover -s flutter/ios -p 'test_verify_simulator_replay.py' -v
+
+      - name: Download the exact historical Simulator App artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.simulator_source_run }}
+          name: ${{ inputs.simulator_source_artifact }}
+          path: simulator-replay-source
+
+      - name: Verify source provenance, original ZIP hash and Simulator identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN: ${{ inputs.simulator_source_run }}
+          SOURCE_COMMIT: ${{ inputs.simulator_source_commit }}
+          SOURCE_ARTIFACT: ${{ inputs.simulator_source_artifact }}
+          ARCHIVE_SHA256: ${{ inputs.simulator_archive_sha256 }}
+          APP_VERSION: ${{ inputs.simulator_app_version }}
+          APP_BUILD: ${{ inputs.simulator_app_build }}
+        run: |
+          python3 flutter/ios/verify_simulator_replay.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-run "$SOURCE_RUN" --source-commit "$SOURCE_COMMIT" \
+            --artifact-name "$SOURCE_ARTIFACT" \
+            --archive simulator-replay-source/linkremote-ios-simulator.zip \
+            --archive-sha256 "$ARCHIVE_SHA256" --version "$APP_VERSION" --build "$APP_BUILD" \
+            --provenance-output "$REPLAY_EVIDENCE/source.json"
+          # ditto preserves the executable permissions from the original Mac ZIP.
+          ditto -x -k simulator-replay-source/linkremote-ios-simulator.zip simulator-replay-app
+
+      - name: Verify one native device family without a preceding compiler workload
+        timeout-minutes: 25
+        shell: bash
+        env:
+          DEVICE_FAMILY: ${{ matrix.family }}
+        run: |
+          python3 flutter/ios/simulator_smoke.py \
+            --app simulator-replay-app/Runner.app \
+            --family "$DEVICE_FAMILY" --output "$REPLAY_EVIDENCE/ui"
+
+      - name: Preserve replay screenshots, logs and exact historical source
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linkremote-ios-ui-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}
+          path: ${{ env.REPLAY_EVIDENCE }}
+          if-no-files-found: warn
+
   ios-unsigned:
+    if: inputs.build_target != 'simulator-ui-replay'
     name: ios-${{ matrix.mode }}
     # Pin the CPU architecture: macos-15 is now Apple Silicon, while our
     # simulator core and the baseline's x64-ios libraries target Intel.

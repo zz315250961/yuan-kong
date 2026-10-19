@@ -41,9 +41,11 @@ class SimulatorSequenceTests(unittest.TestCase):
         self.output = Path(self.directory.name)
         self.events = []
 
-    def run_smoke(self, fail_frame=False, fail_cleanup=False):
+    def run_smoke(self, fail_frame=False, fail_cleanup=False, fail_ready=None):
         def command(*arguments, **kwargs):
             self.events.append(arguments)
+            if fail_ready and arguments[0] == fail_ready:
+                raise subprocess.TimeoutExpired("simctl " + fail_ready, kwargs.get("timeout", 120))
             if fail_cleanup and arguments[0] == "shutdown":
                 raise subprocess.TimeoutExpired("simctl shutdown", 120)
             if arguments[0] == "launch" and arguments[-1] == "top.zperme.linkremote":
@@ -87,6 +89,19 @@ class SimulatorSequenceTests(unittest.TestCase):
         self.assertIn(("screenshot", "iphone-failure.png"), self.events)
         self.assertEqual(result["failure_screenshot"], "iphone-failure.png")
         self.assertTrue(any("shutdown" in error for error in result["cleanup_errors"]))
+
+    def test_runtime_boot_timeout_is_not_reported_as_app_failure(self):
+        result = self.run_smoke(fail_ready="bootstatus")
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["failed_stage"], "wait for runtime boot completion")
+        self.assertFalse(any(event[0] == "install" for event in self.events))
+        self.assertFalse(result.get("first_flutter_frame", False))
+
+    def test_appearance_timeout_identifies_the_ready_command(self):
+        result = self.run_smoke(fail_ready="ui")
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["failed_stage"], "set initial light appearance")
+        self.assertFalse(any(event[0] == "install" for event in self.events))
 
 
 if __name__ == "__main__":

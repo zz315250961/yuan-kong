@@ -88,10 +88,12 @@ def smoke_device(device, app, output):
             print(f"[ios-smoke] {device['name']}: cleanup warning: {message}", flush=True)
 
     try:
-        stage("boot and wait for runtime")
+        stage("boot selected simulator")
         if not was_booted:
             simctl("boot", udid)
+        stage("wait for runtime boot completion")
         simctl("bootstatus", udid, "-b", timeout=180)
+        stage("set initial light appearance")
         simctl("ui", udid, "appearance", "light")
         stage("install app")
         simctl("install", udid, str(app))
@@ -169,6 +171,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--family", choices=("both", "iphone", "ipad"), default="both",
+                        help="Run one family on a clean runner, or both sequentially")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output directory already exists; choose a new path to preserve prior evidence")
@@ -178,6 +182,9 @@ def main():
             ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
         runtime, devices = choose_devices(
             json.loads(simctl("list", "devices", "available", "--json")), sdk_version=sdk_version)
+        if args.family != "both":
+            prefix = "iPhone" if args.family == "iphone" else "iPad"
+            devices = [device for device in devices if device["name"].startswith(prefix)]
         results = [smoke_device(device, args.app.resolve(), args.output.resolve()) for device in devices]
         report = {"runtime": runtime, "devices": results,
                   "scope": "First native Flutter frame and original process survival, with light/dark and "
