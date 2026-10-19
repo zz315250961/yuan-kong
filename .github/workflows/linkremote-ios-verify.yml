@@ -8,10 +8,19 @@ permissions:
 
 jobs:
   ios-unsigned:
+    name: ios-${{ matrix.mode }}
     # Pin the CPU architecture: macos-15 is now Apple Silicon, while our
     # simulator core and the baseline's x64-ios libraries target Intel.
     runs-on: macos-15-intel
     timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: device
+            rust_target: aarch64-apple-ios
+          - mode: simulator
+            rust_target: x86_64-apple-ios
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -42,7 +51,7 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: '1.75'
-          targets: aarch64-apple-ios,x86_64-apple-ios
+          targets: ${{ matrix.rust_target }}
           components: rustfmt
 
       - name: Install Flutter-Rust bridge build tools
@@ -63,32 +72,39 @@ jobs:
         run: brew install nasm pkg-config
 
       - name: Build native dependencies for iOS
+        if: matrix.mode == 'device'
         shell: bash
         run: |
           "$VCPKG_ROOT/vcpkg" install --triplet arm64-ios --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build unsigned iOS controller
+        if: matrix.mode == 'device'
         shell: bash
         run: ./flutter/build_ios.sh --unsigned
 
       - name: Verify Flutter controls and lifecycle regressions
+        if: matrix.mode == 'device'
         working-directory: flutter
         run: flutter test --no-pub
 
       - name: Build simulator native libraries
+        if: matrix.mode == 'simulator'
         shell: bash
         run: |
           # Simulator UI smoke uses software decoding; hardware video behavior
           # remains a device check. The existing build scripts expect x64-ios.
           "$VCPKG_ROOT/vcpkg" install --classic \
             aom:x64-ios libjpeg-turbo:x64-ios opus:x64-ios libvpx:x64-ios libyuv:x64-ios \
+            aom:x64-osx libjpeg-turbo:x64-osx opus:x64-osx libvpx:x64-osx libyuv:x64-osx \
             --overlay-ports="$PWD/res/vcpkg" --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build unsigned Simulator controller
+        if: matrix.mode == 'simulator'
         shell: bash
         run: ./flutter/build_ios.sh --simulator
 
       - name: Verify native iPhone and iPad UI
+        if: matrix.mode == 'simulator'
         shell: bash
         run: |
           python3 flutter/ios/simulator_smoke.py \
@@ -96,7 +112,7 @@ jobs:
             --output flutter/build/ios/simulator-smoke
 
       - name: Upload native simulator screenshots and logs
-        if: always()
+        if: always() && matrix.mode == 'simulator'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linkremote-ios-simulator-evidence
@@ -104,9 +120,11 @@ jobs:
           if-no-files-found: warn
 
       - name: Archive verified app with executable permissions
+        if: matrix.mode == 'device'
         run: ditto -c -k --keepParent flutter/build/ios/iphoneos/Runner.app linkremote-ios-unsigned.zip
 
       - name: Upload unsigned app for build inspection
+        if: matrix.mode == 'device'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linkremote-ios-unsigned
