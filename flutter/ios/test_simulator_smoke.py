@@ -1,10 +1,11 @@
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from simulator_smoke import choose_devices, smoke_device
+from simulator_smoke import choose_devices, main, simctl, smoke_device
 
 
 def device(name, available=True):
@@ -41,7 +42,7 @@ class SimulatorSequenceTests(unittest.TestCase):
         self.output = Path(self.directory.name)
         self.events = []
 
-    def run_smoke(self, fail_frame=False, fail_cleanup=False, fail_ready=None):
+    def run_smoke(self, fail_frame=False, fail_cleanup=False, fail_ready=None, log_text=""):
         def command(*arguments, **kwargs):
             self.events.append(arguments)
             if fail_ready and arguments[0] == fail_ready:
@@ -57,10 +58,14 @@ class SimulatorSequenceTests(unittest.TestCase):
         def capture(udid, target):
             self.events.append(("screenshot", target.name))
 
-        frame_error = RuntimeError("first frame failed") if fail_frame else None
+        def frame(log_path, process):
+            if fail_frame:
+                raise RuntimeError("first frame failed")
+            log_path.write_text(log_text, encoding="utf-8")
+
         with patch("simulator_smoke.simctl", side_effect=command), \
                 patch("simulator_smoke.screenshot", side_effect=capture), \
-                patch("simulator_smoke.wait_for_frame", side_effect=frame_error), \
+                patch("simulator_smoke.wait_for_frame", side_effect=frame), \
                 patch("simulator_smoke.subprocess.Popen", return_value=Mock()), \
                 patch("simulator_smoke.time.sleep"), patch("builtins.print"):
             return smoke_device({"name": "iPhone Test", "udid": "test-udid",
@@ -102,6 +107,119 @@ class SimulatorSequenceTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertEqual(result["failed_stage"], "set initial light appearance")
         self.assertFalse(any(event[0] == "install" for event in self.events))
+
+    def test_ui_overflow_and_native_panic_do_not_pass_a_live_process_check(self):
+        for message in ("A RenderFlex overflowed by 12 pixels on the right.",
+                        "thread 'main' panicked at src/lib.rs:42:5"):
+            with self.subTest(message=message):
+                result = self.run_smoke(log_text=message)
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["failed_stage"], "verify original process and application log")
+
+
+class SimulatorTimeoutDiagnosticsTests(unittest.TestCase):
+    def test_timeout_preserves_the_real_bootstatus_output(self):
+        failure = subprocess.TimeoutExpired("xcrun simctl bootstatus", 180,
+                                            output=b"Waiting on Data Migration\n")
+        with patch("simulator_smoke.subprocess.run", side_effect=failure):
+            with self.assertRaisesRegex(RuntimeError, "Waiting on Data Migration"):
+                simctl("bootstatus", "test-udid", "-b", timeout=180)
+
+
+class SimulatorCLITests(unittest.TestCase):
+    def test_family_option_runs_only_the_requested_device(self):
+        inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+            device("iPhone 16 Pro"), device("iPad Pro 11-inch (M4)")]}}
+        for family, expected in (("iphone", "iPhone"), ("ipad", "iPad"), ("both", "both")):
+            with self.subTest(family=family), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "fresh-evidence"
+                with patch("sys.argv", ["simulator_smoke.py", "--app", "Runner.app",
+                                         "--output", str(output), "--family", family]), \
+                        patch("simulator_smoke.subprocess.check_output", return_value="18.5\n"), \
+                        patch("simulator_smoke.simctl", return_value=json.dumps(inventory)), \
+                        patch("simulator_smoke.smoke_device", return_value={"passed": True}) as smoke, \
+                        patch("builtins.print"):
+                    main()
+                names = [call.args[0]["name"] for call in smoke.call_args_list]
+                self.assertEqual(len(names), 2 if expected == "both" else 1)
+                if expected != "both":
+                    self.assertTrue(names[0].startswith(expected))
+                report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual(len(report["devices"]), len(names))
+
+    def run_fresh_cli(self, created="12345678-1234-1234-1234-123456789ABC", fail_delete=False,
+                      inventory_udid="existing-iphone", smoke_result=None):
+        self.commands = []
+        inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+            {"name": "iPhone 16 Pro", "isAvailable": True, "udid": inventory_udid,
+             "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"},
+            {"name": "iPad Pro 11-inch (M4)", "isAvailable": True, "udid": "existing-ipad"}]}}
+
+        def command(*arguments, **kwargs):
+            self.commands.append(arguments)
+            if arguments[0] == "list":
+                return json.dumps(inventory)
+            if arguments[0] == "create":
+                return created + "\n"
+            if arguments[0] == "delete" and fail_delete:
+                raise RuntimeError("owned cleanup failed")
+            return ""
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "fresh-evidence"
+            with patch("sys.argv", ["simulator_smoke.py", "--app", "Runner.app", "--output",
+                                     str(output), "--family", "iphone", "--fresh-devices"]), \
+                    patch("simulator_smoke.subprocess.check_output", return_value="18.5\n"), \
+                    patch("simulator_smoke.simctl", side_effect=command), \
+                    patch("simulator_smoke.smoke_device",
+                          return_value=smoke_result or {"passed": True}) as smoke, \
+                    patch("builtins.print"), patch("sys.stderr"):
+                try:
+                    main()
+                except SystemExit as error:
+                    self.assertEqual(error.code, 1)
+            return json.loads((output / "report.json").read_text(encoding="utf-8")), smoke
+
+    def test_fresh_devices_creates_same_type_and_deletes_only_the_owned_uuid(self):
+        report, smoke = self.run_fresh_cli()
+        created = "12345678-1234-1234-1234-123456789ABC"
+        selected = smoke.call_args.args[0]
+        self.assertEqual(selected["udid"], created)
+        self.assertEqual(selected["name"], "iPhone 16 Pro")
+        self.assertEqual(selected["state"], "Shutdown")
+        creation = next(command for command in self.commands if command[0] == "create")
+        self.assertEqual(creation[2:], ("com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+                                        "com.apple.CoreSimulator.SimRuntime.iOS-18-5"))
+        self.assertEqual([command for command in self.commands if command[0] == "delete"],
+                         [("delete", created)])
+        self.assertTrue(report["devices"][0]["qa_created_device"])
+        self.assertEqual(report["devices"][0]["inventory_udid"], "existing-iphone")
+
+    def test_malformed_creation_response_cannot_delete_an_inventory_device(self):
+        report, smoke = self.run_fresh_cli(created="existing-iphone")
+        smoke.assert_not_called()
+        self.assertFalse(report["devices"][0]["passed"])
+        self.assertFalse(any(command[0] == "delete" for command in self.commands))
+
+    def test_existing_uuid_is_rejected_even_when_it_has_valid_uuid_syntax(self):
+        existing = "12345678-1234-1234-1234-123456789ABC"
+        report, smoke = self.run_fresh_cli(created=existing, inventory_udid=existing)
+        smoke.assert_not_called()
+        self.assertFalse(report["devices"][0]["passed"])
+        self.assertFalse(any(command[0] == "delete" for command in self.commands))
+
+    def test_owned_deletion_failure_cannot_leave_a_passed_result(self):
+        report, _ = self.run_fresh_cli(fail_delete=True)
+        self.assertFalse(report["devices"][0]["passed"])
+        self.assertIn("owned cleanup failed", report["devices"][0]["error"])
+
+    def test_owned_cleanup_cannot_hide_the_primary_boot_failure(self):
+        report, _ = self.run_fresh_cli(fail_delete=True, smoke_result={
+            "passed": False, "error": "runtime boot failed", "failed_stage": "boot"})
+        result = report["devices"][0]
+        self.assertEqual(result["error"], "runtime boot failed")
+        self.assertEqual(result["failed_stage"], "boot")
+        self.assertTrue(any("owned cleanup failed" in error for error in result["cleanup_errors"]))
 
 
 if __name__ == "__main__":

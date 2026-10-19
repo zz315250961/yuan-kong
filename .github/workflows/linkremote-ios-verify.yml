@@ -26,6 +26,10 @@ on:
       simulator_app_build:
         description: UI replay only - build number of the selected historical App
         default: '75'
+      simulator_fresh_devices:
+        description: UI replay only - create QA-owned data containers of the same device types
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -58,6 +62,7 @@ jobs:
           vm_stat
           df -h
           xcrun simctl list devices booted
+          xcrun simctl help bootstatus
           python3 -m unittest discover -s flutter/ios -p 'test_simulator_smoke.py' -v
           python3 -m unittest discover -s flutter/ios -p 'test_verify_simulator_replay.py' -v
 
@@ -95,10 +100,15 @@ jobs:
         shell: bash
         env:
           DEVICE_FAMILY: ${{ matrix.family }}
+          FRESH_DEVICES: ${{ inputs.simulator_fresh_devices }}
         run: |
+          fresh_options=()
+          if [[ "$FRESH_DEVICES" == true ]]; then
+            fresh_options+=(--fresh-devices)
+          fi
           python3 flutter/ios/simulator_smoke.py \
             --app simulator-replay-app/Runner.app \
-            --family "$DEVICE_FAMILY" --output "$REPLAY_EVIDENCE/ui"
+            --family "$DEVICE_FAMILY" --output "$REPLAY_EVIDENCE/ui" "${fresh_options[@]}"
 
       - name: Preserve replay screenshots, logs and exact historical source
         if: always()

@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 
@@ -19,8 +20,18 @@ FRAME_MARKER = "LINKREMOTE_SMOKE_FIRST_FRAME"
 
 
 def simctl(*arguments, timeout=120, check=True):
-    result = subprocess.run(["xcrun", "simctl", *arguments], text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    started = time.monotonic()
+    try:
+        result = subprocess.run(["xcrun", "simctl", *arguments], text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        captured = error.output or ""
+        if isinstance(captured, bytes):
+            captured = captured.decode("utf-8", errors="replace")
+        elapsed = time.monotonic() - started
+        raise RuntimeError("simctl " + " ".join(arguments) +
+                           f" timed out after {timeout}s (elapsed {elapsed:.1f}s); "
+                           "captured output tail:\n" + captured[-8000:]) from error
     if check and result.returncode:
         raise RuntimeError("simctl " + " ".join(arguments) + ": " + result.stdout)
     return result.stdout
@@ -137,7 +148,8 @@ def smoke_device(device, app, output):
             if re.search(r"^\s*" + pid[1] + r"\s", jobs, re.MULTILINE) is None:
                 raise RuntimeError("App exited or restarted during the UI smoke sequence")
             text = log_path.read_text(encoding="utf-8", errors="replace")
-            if re.search(r"Unhandled Exception|LateInitializationError|initialize failed:", text):
+            if re.search(r"Unhandled Exception|LateInitializationError|initialize failed:|"
+                         r"A RenderFlex overflowed|thread '[^']*' panicked at|EXC_BAD_ACCESS|SIGABRT", text):
                 raise RuntimeError("Startup or lifecycle error found in the Flutter/native log")
             result["passed"] = True
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -167,12 +179,56 @@ def smoke_device(device, app, output):
     return result
 
 
+def smoke_fresh_device(device, runtime, inventory_udids, app, output):
+    """Create a new data container, then delete only the UUID returned by this create."""
+    result = {"model": device["name"], "screenshots": [], "passed": False,
+              "inventory_udid": device["udid"], "qa_created_device": False,
+              "url_delivery_verified": False, "url_delivery_status": "not_attempted"}
+    owned_udid = None
+    stage = "create isolated simulator"
+    try:
+        identifier = device.get("deviceTypeIdentifier", "")
+        if not identifier.startswith("com.apple.CoreSimulator.SimDeviceType."):
+            raise RuntimeError("Selected inventory device has no usable device type identifier")
+        print(f"[ios-smoke] {device['name']}: create an isolated data container", flush=True)
+        created = simctl("create", "LinkRemote QA " + str(uuid.uuid4()), identifier, runtime).strip()
+        if re.fullmatch(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}", created) is None:
+            raise RuntimeError("simctl create did not return one unambiguous owned UUID")
+        if created.lower() in {existing.lower() for existing in inventory_udids}:
+            raise RuntimeError("simctl create returned a pre-existing inventory UUID; refusing ownership")
+        # Assign ownership only after validating the create response. Never
+        # delete the selected inventory device, another booted device, or all.
+        owned_udid = created
+        selected = dict(device, udid=owned_udid, state="Shutdown")
+        result["qa_created_device"] = True
+        result["udid"] = owned_udid
+        stage = "run isolated simulator"
+        result.update(smoke_device(selected, app, output))
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+        result["error"] = str(error)
+        result["failed_stage"] = stage
+        print(f"[ios-smoke] {device['name']}: isolated-device failure: {error}", flush=True)
+    finally:
+        if owned_udid is not None:
+            try:
+                simctl("delete", owned_udid)
+                result["qa_device_deleted"] = True
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                result.setdefault("cleanup_errors", []).append("delete owned simulator: " + str(error))
+                result.setdefault("error", "Owned Simulator deletion failed: " + str(error))
+                result["passed"] = False
+                result["qa_device_deleted"] = False
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--family", choices=("both", "iphone", "ipad"), default="both",
                         help="Run one family on a clean runner, or both sequentially")
+    parser.add_argument("--fresh-devices", action="store_true",
+                        help="Create and clean up only QA-owned devices of the same runtime and types")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output directory already exists; choose a new path to preserve prior evidence")
@@ -180,13 +236,19 @@ def main():
     try:
         sdk_version = subprocess.check_output(
             ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
-        runtime, devices = choose_devices(
-            json.loads(simctl("list", "devices", "available", "--json")), sdk_version=sdk_version)
+        inventory = json.loads(simctl("list", "devices", "available", "--json"))
+        runtime, devices = choose_devices(inventory, sdk_version=sdk_version)
         if args.family != "both":
             prefix = "iPhone" if args.family == "iphone" else "iPad"
             devices = [device for device in devices if device["name"].startswith(prefix)]
-        results = [smoke_device(device, args.app.resolve(), args.output.resolve()) for device in devices]
+        inventory_udids = {device["udid"] for group in inventory["devices"].values()
+                           for device in group if device.get("udid")}
+        results = [(smoke_fresh_device(device, runtime, inventory_udids,
+                                      args.app.resolve(), args.output.resolve())
+                    if args.fresh_devices else
+                    smoke_device(device, args.app.resolve(), args.output.resolve())) for device in devices]
         report = {"runtime": runtime, "devices": results,
+                  "device_source": "qa_created" if args.fresh_devices else "runner_inventory",
                   "scope": "First native Flutter frame and original process survival, with light/dark and "
                            "foreground-return screenshots for manual inspection before requesting a URL. "
                            "URL delivery is not verified; system confirmation requires manual verification. "
