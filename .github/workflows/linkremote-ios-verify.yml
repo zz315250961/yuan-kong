@@ -188,20 +188,33 @@ jobs:
           path: flutter/build/linkremote-ios-logs/*.log
           if-no-files-found: warn
 
+      - name: Archive Simulator app before UI smoke
+        if: matrix.mode == 'simulator'
+        run: ditto -c -k --keepParent flutter/build/ios/iphonesimulator/Runner.app linkremote-ios-simulator.zip
+
+      - name: Upload Simulator app for independent inspection
+        if: matrix.mode == 'simulator'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linkremote-ios-simulator-app-${{ github.run_attempt }}
+          path: linkremote-ios-simulator.zip
+          if-no-files-found: error
+
       - name: Verify native iPhone and iPad UI
         if: matrix.mode == 'simulator'
+        timeout-minutes: 25
         shell: bash
         run: |
           python3 flutter/ios/simulator_smoke.py \
             --app flutter/build/ios/iphonesimulator/Runner.app \
-            --output flutter/build/ios/simulator-smoke
+            --output flutter/build/ios/simulator-smoke-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload native simulator screenshots and logs
         if: always() && matrix.mode == 'simulator'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: linkremote-ios-simulator-evidence
-          path: flutter/build/ios/simulator-smoke
+          name: linkremote-ios-simulator-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: flutter/build/ios/simulator-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
 
       - name: Archive verified app with executable permissions

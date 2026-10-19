@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Boot real iOS Simulators, verify the first Flutter frame and capture native UI.
 
-No account, developer certificate, browser, or third-party test service is used.
+No account, developer certificate, or third-party test service is used.
+Safari is only a background/foreground target, not the source of UI screenshots.
 Run after ./flutter/build_ios.sh --simulator on an Intel Mac.
 """
 
@@ -66,14 +67,33 @@ def smoke_device(device, app, output):
     udid = device["udid"]
     family = "iphone" if device["name"].startswith("iPhone") else "ipad"
     log_path = output / (family + ".log")
-    result = {"model": device["name"], "udid": udid, "screenshots": [], "passed": False}
+    result = {"model": device["name"], "udid": udid, "screenshots": [], "passed": False,
+              "url_delivery_verified": False, "url_delivery_status": "not_attempted"}
     log_process = None
     was_booted = device["state"] == "Booted"
+
+    def stage(name):
+        result["last_stage"] = name
+        print(f"[ios-smoke] {device['name']}: {name}", flush=True)
+
+    def cleanup(name, action):
+        try:
+            action()
+        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+            message = name + ": " + str(error)
+            result.setdefault("cleanup_errors", []).append(message)
+            if "error" not in result:
+                result["error"] = "Cleanup failed: " + message
+                result["passed"] = False
+            print(f"[ios-smoke] {device['name']}: cleanup warning: {message}", flush=True)
+
     try:
+        stage("boot and wait for runtime")
         if not was_booted:
             simctl("boot", udid)
         simctl("bootstatus", udid, "-b", timeout=180)
         simctl("ui", udid, "appearance", "light")
+        stage("install app")
         simctl("install", udid, str(app))
         with log_path.open("w", encoding="utf-8") as log_stream:
             log_process = subprocess.Popen(
@@ -81,14 +101,22 @@ def smoke_device(device, app, output):
                  "--level", "debug", "--predicate", 'process == "Runner"'],
                 stdout=log_stream, stderr=subprocess.STDOUT)
             time.sleep(1)
+            stage("launch and wait for first Flutter frame")
             launched = simctl("launch", "--terminate-running-process", udid, BUNDLE)
             result["launch"] = launched.strip()
             wait_for_frame(log_path, log_process)
+            result["first_flutter_frame"] = True
             time.sleep(2)
-            for state in ("home-light", "warm-link", "resumed", "home-dark"):
+            # Opening a custom URL may leave a system confirmation alert on
+            # screen. Keep it last so it cannot obscure the normal UI checks.
+            for state in ("home-light", "home-dark", "resumed", "warm-link"):
+                stage(state)
                 if state == "warm-link":
                     simctl("openurl", udid, "linkremote://")
+                    result["url_open_requested"] = True
+                    result["url_delivery_status"] = "system_confirmation_requires_manual_verification"
                 elif state == "resumed":
+                    simctl("ui", udid, "appearance", "light")
                     simctl("launch", udid, "com.apple.mobilesafari")
                     time.sleep(1)
                     result["resume_launch"] = simctl("launch", udid, BUNDLE).strip()
@@ -98,6 +126,7 @@ def smoke_device(device, app, output):
                 target = output / (family + "-" + state + ".png")
                 screenshot(udid, target)
                 result["screenshots"].append(target.name)
+            stage("verify original process and application log")
             pid = re.search(r":\s*(\d+)\s*$", launched)
             if pid is None:
                 raise RuntimeError("Cannot determine the launched app PID")
@@ -108,21 +137,31 @@ def smoke_device(device, app, output):
             text = log_path.read_text(encoding="utf-8", errors="replace")
             if re.search(r"Unhandled Exception|LateInitializationError|initialize failed:", text):
                 raise RuntimeError("Startup or lifecycle error found in the Flutter/native log")
-            result["first_flutter_frame"] = True
             result["passed"] = True
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
         result["error"] = str(error)
+        result["failed_stage"] = result.get("last_stage")
+        print(f"[ios-smoke] {device['name']}: failed: {error}", flush=True)
+        try:
+            target = output / (family + "-failure.png")
+            screenshot(udid, target)
+            result["failure_screenshot"] = target.name
+        except (RuntimeError, OSError, subprocess.SubprocessError) as capture_error:
+            result["failure_screenshot_error"] = str(capture_error)
     finally:
         if log_process is not None:
-            log_process.terminate()
-            try:
-                log_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                log_process.kill()
-                log_process.wait()
-        simctl("ui", udid, "appearance", "light", check=False)
+            def stop_log():
+                log_process.terminate()
+                try:
+                    log_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log_process.kill()
+                    log_process.wait(timeout=5)
+            cleanup("stop log stream", stop_log)
+        cleanup("restore light appearance", lambda: simctl("ui", udid, "appearance", "light", check=False))
         if not was_booted:
-            simctl("shutdown", udid, check=False)
+            cleanup("shutdown", lambda: simctl("shutdown", udid, check=False))
+        print(f"[ios-smoke] {device['name']}: finished, passed={result['passed']}", flush=True)
     return result
 
 
@@ -131,7 +170,9 @@ def main():
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
+    if args.output.exists():
+        parser.error("Output directory already exists; choose a new path to preserve prior evidence")
+    args.output.mkdir(parents=True)
     try:
         sdk_version = subprocess.check_output(
             ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
@@ -139,7 +180,9 @@ def main():
             json.loads(simctl("list", "devices", "available", "--json")), sdk_version=sdk_version)
         results = [smoke_device(device, args.app.resolve(), args.output.resolve()) for device in devices]
         report = {"runtime": runtime, "devices": results,
-                  "scope": "First native Flutter frame, warm URL, foreground return and light/dark UI. "
+                  "scope": "First native Flutter frame and original process survival, with light/dark and "
+                           "foreground-return screenshots for manual inspection before requesting a URL. "
+                           "URL delivery is not verified; system confirmation requires manual verification. "
                            "Does not validate live remote input, camera, cellular or device performance."}
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report, indent=2))

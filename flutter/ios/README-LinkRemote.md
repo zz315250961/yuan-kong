@@ -56,16 +56,22 @@ rustup target add x86_64-apple-ios
 ./flutter/build_ios.sh --simulator
 python3 flutter/ios/simulator_smoke.py \
   --app flutter/build/ios/iphonesimulator/Runner.app \
-  --output flutter/build/ios/simulator-smoke
+  --output "flutter/build/ios/simulator-smoke-$(uuidgen)"
 ```
 
 `x64-ios` 是实际 Simulator 依赖，`x64-osx` 是同一 Intel 主机生成 Rust 桥接时需要的 host 依赖，两者分目录安装。仓库的 libvpx overlay 在严格 `x64-ios` 条件下选择上游真实的 `x86_64-iphonesimulator-gcc` target；设备 arm/arm64 仍沿用原路径。
 
-烟测选择与当前 Xcode Simulator SDK 版本相同的已安装 iOS runtime 下的 iPhone 与 iPad，分别启动 App，等待原生首个 Flutter 画面回调，检查暖启动空深链和切后台再返回，抓取浅/深色原生截图及日志，确认原进程仍在运行。CI 产物 `linkremote-ios-simulator-evidence` 包含 `report.json`、PNG 与进程/应用日志。启动成功只覆盖上述范围，截图还需要人工观察布局，不能由模拟器推断真实远程控制、摄像头、蜂窝网络、温度和帧率已通过。
+烟测选择与当前 Xcode Simulator SDK 版本相同的已安装 iOS runtime 下的 iPhone 与 iPad，分别启动 App，等待原生首个 Flutter 画面回调。实际顺序为 `home-light` → `home-dark`（切系统深色）→ `resumed`（恢复系统浅色，再经 Safari 切后台并返回）→ 最后才请求空 `linkremote://`，每步抓取原生截图。Safari 只是切后台的目标，不用于渲染或截图 App。原生首帧等待仍为 90 秒，CI 整个 UI 步骤最多 25 分钟；每设备/阶段即时输出诊断，失败时尝试保留现场截图，清理失败记录为独立错误，不能覆盖原始失败。
+
+空深链可能出现系统的 “Open in LinkRemote?” 确认弹窗，脚本不点击确认，也不把请求成功当作应用已收到链接。报告明确 `url_delivery_verified=false`，交付及确认后的行为仍需人工验证。把深链放在最后仅隔离它对此前截图的干扰，不证明相关功能或旧 iPad 黑条已修复。截图仍需人工观察布局，不能由首帧/PID 断言推断真实远控、摄像头、蜂窝网络、温度和帧率已通过。
+
+每次运行必须使用新输出目录；脚本会拒绝已有路径，保留旧失败或部分证据。CI 路径为 `flutter/build/ios/simulator-smoke-<run_id>-<attempt>`，对应 artifact `linkremote-ios-simulator-evidence-<run_id>-<attempt>`，包含 `report.json`、PNG 与进程/应用日志。UI 烟测之前，工作流先用 `ditto` 归档 Simulator `Runner.app` 并上传 artifact `linkremote-ios-simulator-app-<attempt>`；其内部 `linkremote-ios-simulator.zip` 保留执行权限，可供独立检查或在兼容 Intel Mac 上复用，不是 iPhone/iPad 安装版。
 
 Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路。它不作为设备 Release 性能或 VideoToolbox 硬解验证。当前入口限定 Intel Mac；Apple Silicon Simulator 需同时调整原生依赖查找规则，并非把设备 arm64 库直接链接进去。
 
 ## 免费 Apple ID 的真机测试路径
+
+当前用户尚无可用 Mac，也没有付费 Apple Developer 账号；因此目前没有可执行的本地真机签名环境。云端的无签名设备构建和 Simulator 检查不受影响，但上传的 unsigned `.app` 不是可直接安装到 iPhone/iPad 的安装版。
 
 用户自己的 iPhone/iPad 可用 Mac 上 Xcode 的 Apple ID Personal Team 进行开发测试，不必为了本机测试先购买付费账号：在 Xcode 登录 Apple ID，打开 `flutter/ios/Runner.xcworkspace`，选择 Runner 的 Signing & Capabilities → Automatically manage signing 与自己的 Personal Team，连接并信任设备、按系统提示开启 Developer Mode，再运行 Debug。
 
@@ -78,10 +84,23 @@ Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路�
 - `linkremote://` 由现有 `uni_links` 插件处理。`FlutterDeepLinkingEnabled=false` 明确关闭 Flutter 内置处理，避免升级 Flutter 后同一链接被两套处理器消费；不申请未实现的 Universal Links 域名能力。
 - 不声明后台被控服务。系统暂停 App 后不能保证连接持续收发，返回前台的恢复行为须在签名真机验收。
 - iOS 使用会话工具栏的显式剪贴板粘贴；`mChannel` 是 Android 平台通道，不把 Android 的后台剪贴板调用视为 iOS 自动同步已实现。
+- 聊天仅支持文字，不支持麦克风双向 Voice call，也不为未实现的功能申请麦克风权限。接收远端系统音频已有 CPAL/Opus 实现，但尚须签名真机验收声音、音量和中断恢复，不能由编译或 Simulator 启动推断已通过。
 
 ## 验证证据与边界（2026-10-19）
 
-上一次完整无签名构建为 GitHub Actions run `36308664386`（2026-09-27，提交 `ab6d9fc`），结果成功，对应 v1.0.42。该证据只适用于当时的源码。本轮工程变更需要重新运行 macOS 构建；本机为 Windows，尚未执行新 Xcode 编译。
+本轮已在云端 Intel macOS / Xcode 16.4 完成两个目标的真实编译；本机仍是 Windows，并未执行本地 Xcode 编译或真机签名。两个目标来源不同，不能把其中一个提交当成所有候选二进制的来源：
+
+- 设备 Release：run [`39225991682`](https://github.com/zz315250961/yuan-kong/actions/runs/39225991682/job/117972303342) 的 `ios-device` job 成功，源码 `73522f9503d5f87a8676ce5a8364c5b44e11e8b4`。完成 `aarch64-apple-ios` Rust 核心、真实 iPhoneOS App 和版本/配置检查，并通过 65 项 Flutter 回归测试。同一 run 当时的 Simulator job 失败，不将该 run 整体记成成功。
+- Simulator Debug：run [`39231661322`](https://github.com/zz315250961/yuan-kong/actions/runs/39231661322) 整体成功，源码 `6ddf347d850d739239ad7c848b3e9936cb3eef08`。真实构建 `x86_64-apple-ios` 核心与 `iPhoneSimulator` App，并核对 `top.zperme.linkremote`、`1.0.43 (75)`。iOS 18.5 下 iPhone 16 Pro 与 iPad Pro 11-inch (M4) 均出现原生首个 Flutter 画面回调；烟测结束原 PID 分别仍为 `97138` / `4370`。
+
+官方产物已保留到工作区 `artifacts/v1.0.43-candidate/`：`LinkRemote-1.0.43-ios-unsigned.zip` 的 SHA-256 为 `9a26278f619014792c9c7f1e21d3e1623c0b82b1a6d7f5b1f65d679216f44146`，仅是无签名设备 App；`LinkRemote-1.0.43-ios-simulator-evidence.zip` 为官方 artifact `12178899508` 的原始 ZIP，SHA-256 为 `48e0c0f1eaedb41be189821e1e862680e255a4bf9651b5088cb5844f5012304c`。展开的 `ios-simulator-smoke/` 包含 8 张原生 PNG、两台设备的 Runner/进程日志和 `report.json`。
+
+人工逐张核查后，必须收窄脚本 `passed=true` 的含义：
+
+- 两台设备的纵向、默认字号、浅色首页已正常显示；未见控件遮挡或文字溢出。首帧与原进程存活有日志支持。
+- `warm-link`、`resumed`、`home-dark` 截图仍显示系统的 “Open in LinkRemote?” 确认弹窗，脚本没有确认 Open。因此不能据此认定暖深链已交付应用，也不能认定无遮挡的后台恢复/完整深色首页已验收。
+- iPad 的上述后三张截图还出现大面积黑色横条；原因尚未定位，不能忽略该视觉异常或把截图存活当成页面正确。
+- 已检索两份 Runner 日志中的首帧标记，以及 Unhandled Exception、LateInitializationError、初始化失败、RenderFlex 溢出、Rust panic 和崩溃信号特征，未发现后者；这不等价于所有错误均已排除。横屏、大字号、深链确认后的行为、真实远控输入、音频、网络恢复和 120 FPS 均未由本轮 Simulator 证据验证。
 
 源配置脚本检查权限说明、横竖屏、深链归属、三个构建配置的包名、部署目标，以及全部 iPhone/iPad/App Store 图标的像素尺寸和无透明通道。可选产物检查还会核对真实包名/版本、iPhoneOS 平台、arm64 Mach-O 和编译后的图标资源。
 
