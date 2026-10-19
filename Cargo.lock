@@ -7259,7 +7259,7 @@ dependencies = [
 
 [[package]]
 name = "linkremote"
-version = "1.0.42"
+version = "1.0.43"
 dependencies = [
  "android-wakelock",
  "android_logger",
@@ -7371,7 +7371,7 @@ dependencies = [
 
 [[package]]
 name = "linkremote-portable-packer"
-version = "1.0.42"
+version = "1.0.43"
 dependencies = [
  "brotli",
  "dirs 5.0.1",
