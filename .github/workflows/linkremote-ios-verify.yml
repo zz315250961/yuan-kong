@@ -2,6 +2,12 @@ name: LinkRemote iOS Build Verification
 
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: Verify both targets, or retry one independently
+        type: choice
+        options: [both, device, simulator]
+        default: both
 
 permissions:
   contents: read
@@ -16,11 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - mode: device
-            rust_target: aarch64-apple-ios
-          - mode: simulator
-            rust_target: x86_64-apple-ios
+        mode: ${{ fromJSON(inputs.build_target == 'device' && '["device"]' || inputs.build_target == 'simulator' && '["simulator"]' || '["device","simulator"]') }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -51,7 +53,7 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: '1.75'
-          targets: ${{ matrix.rust_target }}
+          targets: ${{ matrix.mode == 'device' && 'aarch64-apple-ios' || 'x86_64-apple-ios' }}
           components: rustfmt
 
       - name: Cache Rust builds and pinned native tools
