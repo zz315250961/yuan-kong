@@ -188,27 +188,35 @@ class _PeersViewState extends State<_PeersView>
       child: Consumer<Peers>(builder: (context, peers, child) {
         if (peers.peers.isEmpty) {
           gFFI.peerTabModel.setCurrentTabCachedPeers([]);
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.sentiment_very_dissatisfied_rounded,
-                  color: Theme.of(context).tabBarTheme.labelColor,
-                  size: 40,
-                ).paddingOnly(bottom: 10),
-                Text(
-                  translate(
-                    _emptyMessages[widget.peers.loadEvent] ?? 'Empty',
-                  ),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Theme.of(context).tabBarTheme.labelColor,
-                  ),
+          return LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxHeight < 120;
+            return Center(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                    horizontal: 12, vertical: compact ? 0 : 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!compact)
+                      Icon(
+                        Icons.sentiment_very_dissatisfied_rounded,
+                        color: Theme.of(context).tabBarTheme.labelColor,
+                        size: 40,
+                      ).paddingOnly(bottom: 10),
+                    Text(
+                      translate(
+                        _emptyMessages[widget.peers.loadEvent] ?? 'Empty',
+                      ),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(context).tabBarTheme.labelColor,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
+              ),
+            );
+          });
         } else {
           return _buildPeersView(peers);
         }

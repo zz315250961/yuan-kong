@@ -230,7 +230,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         _isUsingPublicServer = isUsingPublicServer;
       }
 
-      if (update) {
+      if (mounted && update) {
         setState(() {});
       }
     });
@@ -248,7 +248,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       () async {
         final ibs = await checkAndUpdateIgnoreBatteryStatus();
         final sob = await checkAndUpdateStartOnBoot();
-        if (ibs || sob) {
+        if (mounted && (ibs || sob)) {
           setState(() {});
         }
       }();
@@ -752,6 +752,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 showToast(translate('Checking for update...'));
                 bind.mainGetSoftwareUpdateUrl();
                 await Future.delayed(const Duration(seconds: 4));
+                if (!mounted) return;
                 final url = stateGlobal.updateUrl.value;
                 if (url.isEmpty) {
                   showToast(translate('You are on the latest version'));

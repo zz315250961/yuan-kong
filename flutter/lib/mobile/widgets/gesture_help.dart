@@ -75,13 +75,18 @@ class _GestureHelpState extends State<GestureHelp> {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+    return LayoutBuilder(
+        builder: (context, constraints) =>
+            _buildHelp(context, constraints.maxWidth));
+  }
+
+  Widget _buildHelp(BuildContext context, double availableWidth) {
     final space = 12.0;
-    var width = size.width - 2 * space;
+    var width = availableWidth - 2 * space;
     final minWidth = 90;
-    if (size.width > minWidth + 2 * space) {
-      final n = (size.width / (minWidth + 2 * space)).floor();
-      width = size.width / n - 2 * space;
+    if (availableWidth > minWidth + 2 * space) {
+      final n = (availableWidth / (minWidth + 2 * space)).floor();
+      width = availableWidth / n - 2 * space;
     }
     return Center(
         child: Padding(
@@ -97,11 +102,13 @@ class _GestureHelpState extends State<GestureHelp> {
                       ToggleSwitch(
                         initialLabelIndex: _selectedIndex,
                         activeFgColor: Colors.white,
-                        inactiveFgColor: Colors.white60,
+                        inactiveFgColor: Theme.of(context).colorScheme.onSurface,
                         activeBgColor: [MyTheme.accent],
-                        inactiveBgColor: Theme.of(context).hintColor,
+                        inactiveBgColor: Theme.of(context).cardColor,
                         totalSwitches: 2,
-                        minWidth: 150,
+                        minWidth: ((availableWidth - 24) / 2)
+                            .clamp(0.0, 150.0)
+                            .toDouble(),
                         fontSize: 15,
                         iconSize: 18,
                         labels: [
@@ -131,6 +138,7 @@ class _GestureHelpState extends State<GestureHelp> {
                               onChanged: (value) async {
                                 if (value == null) return;
                                 await _virtualMouseMode.toggleVirtualMouse();
+                                if (!mounted) return;
                                 // Exit relative mouse mode when virtual mouse is hidden
                                 _exitRelativeMouseModeIf(
                                     !_virtualMouseMode.showVirtualMouse);
@@ -140,6 +148,7 @@ class _GestureHelpState extends State<GestureHelp> {
                             InkWell(
                               onTap: () async {
                                 await _virtualMouseMode.toggleVirtualMouse();
+                                if (!mounted) return;
                                 // Exit relative mouse mode when virtual mouse is hidden
                                 _exitRelativeMouseModeIf(
                                     !_virtualMouseMode.showVirtualMouse);
@@ -155,7 +164,9 @@ class _GestureHelpState extends State<GestureHelp> {
                           // Indent "Virtual mouse size"
                           padding: const EdgeInsets.only(left: 24.0),
                           child: SizedBox(
-                            width: 260,
+                            width: (availableWidth - 24)
+                                .clamp(0.0, 260.0)
+                                .toDouble(),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
@@ -216,6 +227,7 @@ class _GestureHelpState extends State<GestureHelp> {
                                       if (value == null) return;
                                       await _virtualMouseMode
                                           .toggleVirtualJoystick();
+                                      if (!mounted) return;
                                       // Exit relative mouse mode when joystick is hidden
                                       _exitRelativeMouseModeIf(
                                           !_virtualMouseMode
@@ -227,6 +239,7 @@ class _GestureHelpState extends State<GestureHelp> {
                                     onTap: () async {
                                       await _virtualMouseMode
                                           .toggleVirtualJoystick();
+                                      if (!mounted) return;
                                       // Exit relative mouse mode when joystick is hidden
                                       _exitRelativeMouseModeIf(
                                           !_virtualMouseMode
@@ -288,6 +301,11 @@ class _GestureHelpState extends State<GestureHelp> {
                               translate("Left Mouse")),
                           GestureInfo(
                               width,
+                              GestureIcons.iconGestureFTap_,
+                              translate("Two-Finger Tap"),
+                              translate("Right Mouse")),
+                          GestureInfo(
+                              width,
                               GestureIcons.iconGesturePressHold,
                               translate("One-Long Tap"),
                               translate("Right Mouse")),
@@ -318,6 +336,11 @@ class _GestureHelpState extends State<GestureHelp> {
                               GestureIcons.iconMobileTouch,
                               translate("One-Finger Tap"),
                               translate("Left Mouse")),
+                          GestureInfo(
+                              width,
+                              GestureIcons.iconGestureFTap_,
+                              translate("Two-Finger Tap"),
+                              translate("Right Mouse")),
                           GestureInfo(
                               width,
                               GestureIcons.iconGesturePressHold,
@@ -377,8 +400,7 @@ class GestureInfo extends StatelessWidget {
             SizedBox(height: 6),
             Text(fromText,
                 textAlign: TextAlign.center,
-                style:
-                    TextStyle(fontSize: 9, color: Theme.of(context).hintColor)),
+                style: Theme.of(context).textTheme.bodySmall),
             SizedBox(height: 3),
             Text(toText,
                 textAlign: TextAlign.center,

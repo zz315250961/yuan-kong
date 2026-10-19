@@ -34,6 +34,7 @@ class HomePageState extends State<HomePage> {
       : false; // change this when ios have chat page
 
   void refreshPages() {
+    if (!mounted) return;
     setState(() {
       initPages();
     });
@@ -47,6 +48,7 @@ class HomePageState extends State<HomePage> {
 
   void initPages() {
     _pages.clear();
+    _chatPageTabIndex = -1;
     if (!bind.isIncomingOnly()) {
       _pages.add(ConnectionPage(
         appBarActions: [myDevicesAction()],
@@ -57,6 +59,9 @@ class HomePageState extends State<HomePage> {
       _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
     }
     _pages.add(SettingsPage());
+    if (_selectedIndex >= _pages.length) {
+      _selectedIndex = 0;
+    }
   }
 
   @override
@@ -246,9 +251,9 @@ class WebHomePage extends StatelessWidget {
       }
     }
     if (id != null) {
-      connect(context, id, 
-        isFileTransfer: isFileTransfer, 
-        isViewCamera: isViewCamera, 
+      connect(context, id,
+        isFileTransfer: isFileTransfer,
+        isViewCamera: isViewCamera,
         isTerminal: isTerminal,
         password: password);
     }

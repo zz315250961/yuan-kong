@@ -66,6 +66,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Orientation? _currentOrientation;
   final _uniqueKey = UniqueKey();
   Timer? _iosKeyboardWorkaroundTimer;
+  Timer? _orientationTimer;
 
   final _blockableOverlayState = BlockableOverlayState();
 
@@ -101,6 +102,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       forceRelay: widget.forceRelay,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       gFFI.dialogManager
           .showLoading(translate('Connecting...'), onCancel: closeConnection);
@@ -115,6 +117,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         .changeCurrentKey(MessageKey(widget.id, ChatModel.clientModeID));
     _blockableOverlayState.applyFfi(gFFI);
     gFFI.imageModel.addCallbackOnFirstImage((String peerId) {
+      if (!mounted) return;
       gFFI.recordingModel
           .updateStatus(bind.sessionGetIsRecording(sessionId: gFFI.sessionId));
       if (gFFI.recordingModel.start) {
@@ -143,6 +146,16 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    // Stop local callbacks before any asynchronous platform/session cleanup.
+    _timer?.cancel();
+    _iosKeyboardWorkaroundTimer?.cancel();
+    _orientationTimer?.cancel();
+    unawaited(keyboardSubscription.cancel());
+    _waylandKeyboardGateWorker?.dispose();
+    _mobileFocusNode.dispose();
+    _physicalFocusNode.dispose();
+    _textController.dispose();
+    WakelockManager.disable(_uniqueKey);
     // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
     // after several awaits (canvas save, image update, the `enable_soft_keyboard`
     // platform call), so if the app is backgrounded while this page is disposing,
@@ -157,20 +170,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     gFFI.inputModel.listenToMouse(false);
     gFFI.imageModel.disposeImage();
     gFFI.cursorModel.disposeImages();
-    await gFFI.invokeMethod("enable_soft_keyboard", true);
-    _mobileFocusNode.dispose();
-    _physicalFocusNode.dispose();
     clearWaylandKeyboardPromptSuppressedForConnection(sessionId.toString());
-    _waylandKeyboardGateWorker?.dispose();
     inputModel.keyboardInputAllowed = true;
+    await gFFI.invokeMethod("enable_soft_keyboard", true);
     await gFFI.close();
-    _timer?.cancel();
-    _iosKeyboardWorkaroundTimer?.cancel();
     gFFI.dialogManager.dismissAll();
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
         overlays: SystemUiOverlay.values);
-    WakelockManager.disable(_uniqueKey);
-    await keyboardSubscription.cancel();
     removeSharedStates(widget.id);
     // `on_voice_call_closed` should be called when the connection is ended.
     // The inner logic of `on_voice_call_closed` will check if the voice call is active.
@@ -239,6 +245,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       );
 
   void onSoftKeyboardChanged(bool visible) {
+    if (!mounted) return;
     if (!visible) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       // [pi.version.isNotEmpty] -> check ready or not, avoid login without soft-keyboard
@@ -266,6 +273,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       _iosKeyboardWorkaroundTimer = null;
       _timer?.cancel();
       _timer = Timer(kMobileDelaySoftKeyboardFocus, () {
+        if (!mounted) return;
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
             overlays: SystemUiOverlay.values);
         _mobileFocusNode.requestFocus();
@@ -413,6 +421,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   void _openKeyboardUnlocked() {
+    if (!mounted) return;
     inputModel.keyboardInputAllowed = true;
     gFFI.invokeMethod("enable_soft_keyboard", true);
     // destroy first, so that our _value trick can work
@@ -421,11 +430,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     setState(() => _showEdit = false);
     _timer?.cancel();
     _timer = Timer(kMobileDelaySoftKeyboard, () {
+      if (!mounted) return;
       // show now, and sleep a while to requestFocus to
       // make sure edit ready, so that keyboard won't show/hide/show/hide happen
       setState(() => _showEdit = true);
       _timer?.cancel();
       _timer = Timer(kMobileDelaySoftKeyboardFocus, () {
+        if (!mounted) return;
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
             overlays: SystemUiOverlay.values);
         _mobileFocusNode.requestFocus();
@@ -508,10 +519,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                             child:
                                 OrientationBuilder(builder: (ctx, orientation) {
                               if (_currentOrientation != orientation) {
-                                Timer(const Duration(milliseconds: 200), () {
+                                _currentOrientation = orientation;
+                                _orientationTimer?.cancel();
+                                _orientationTimer = Timer(
+                                    const Duration(milliseconds: 200), () {
+                                  if (!mounted) return;
                                   gFFI.dialogManager
                                       .resetMobileActionsOverlay(ffi: gFFI);
-                                  _currentOrientation = orientation;
                                   gFFI.canvasModel.updateViewStyle();
                                 });
                               }
@@ -833,7 +847,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         items: more,
         elevation: 8,
       );
-      if (index != null) {
+      if (mounted && index != null) {
         if (index < mobileActionMenus.length) {
           mobileActionMenus[index].onPressed?.call();
         } else if (index < mobileActionMenus.length + more.length) {
@@ -900,6 +914,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         .map((e) => PopupMenuItem<int>(child: e.value.getChild(), value: e.key))
         .toList();
     Future.delayed(Duration.zero, () async {
+      if (!mounted) return;
       final size = MediaQuery.of(context).size;
       final x = 120.0;
       final y = size.height;
@@ -909,7 +924,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         items: menuItems,
         elevation: 8,
       );
-      if (index != null && index < menus.length) {
+      if (mounted && index != null && index < menus.length) {
         menus[index].onPressed?.call();
       }
     });
@@ -919,7 +934,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   BottomAppBar getGestureHelp() {
     return BottomAppBar(
         child: SingleChildScrollView(
-            controller: ScrollController(),
             padding: EdgeInsets.symmetric(vertical: 10),
             child: GestureHelp(
               touchMode: gFFI.ffiModel.touchMode,
