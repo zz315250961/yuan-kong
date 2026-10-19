@@ -79,6 +79,36 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final opened = <Uri>[];
+    var licensesLoaded = Completer<void>();
+    // The actual LicensePage enumerates real NOTICES/compute-isolate data.
+    // Observe its stream ending without removing or replacing any licenses.
+    LicenseRegistry.addLicense(() {
+      if (!licensesLoaded.isCompleted) licensesLoaded.complete();
+      return const Stream<LicenseEntry>.empty();
+    });
+    Future<void> waitForLicenses() async {
+      await tester.runAsync(() async {
+        final elapsed = Stopwatch()..start();
+        do {
+          // Flush fake-zone callbacks while yielding to real NOTICES isolates.
+          // A wide LicensePage also schedules its default detail paragraphs.
+          await tester.pump(const Duration(milliseconds: 16));
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          if (elapsed.elapsed > const Duration(seconds: 15)) {
+            fail('License enumeration/detail did not finish within 15 seconds');
+          }
+        } while (!licensesLoaded.isCompleted ||
+            find.byType(CircularProgressIndicator).evaluate().isNotEmpty);
+      });
+      expect(licensesLoaded.isCompleted, isTrue);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> openLicenses() async {
+      await tester.tap(find.text('开源许可（可离线查看）'));
+      await waitForLicenses();
+    }
+
     await tester.pumpWidget(RepaintBoundary(
         key: _captureKey,
         child: MaterialApp(
@@ -107,14 +137,24 @@ void main() {
     await tester.tap(find.text('公开源码与版本'));
     await tester.pump();
     expect(opened, [Uri.parse(linkRemoteSourceUrl)]);
-    // Flutter decompresses dependency NOTICES in real isolates. Allow that IO
-    // to finish rather than advancing only the widget test's fake clock.
-    await tester.runAsync(() async {
-      await tester.tap(find.text('开源许可（可离线查看）'));
-      await tester.pumpAndSettle();
-    });
+    await openLicenses();
     expect(find.byType(LicensePage), findsOneWidget);
     expect(find.text('LinkRemote'), findsWidgets);
+    expect(tester.takeException(), isNull);
+    licensesLoaded = Completer<void>();
+    tester.view.physicalSize = const Size(1024, 1366);
+    await waitForLicenses();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(LinkRemoteAboutPage), findsOneWidget);
+    licensesLoaded = Completer<void>();
+    tester.view.physicalSize = const Size(1024, 1366);
+    await tester.pumpAndSettle();
+    await openLicenses();
+    expect(find.byType(LicensePage), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

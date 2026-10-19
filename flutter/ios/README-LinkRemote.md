@@ -80,7 +80,7 @@ Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路�
 ## 原生配置范围
 
 - 最低 iOS 13，同时包含 iPhone 与 iPad；竖屏和左右横屏均已声明，iPad 也支持倒置竖屏。
-- 相机权限用于扫描设备连接码，照片权限用于从用户选择的图片识别连接码，本地网络权限用于局域网设备连接。
+- 相机/照片权限说明为扫码和相册识码用途预留；当前 `ScanPage` 虽有实现文件，但没有 import、实例或路由入口，不能把扫码连接标为已接入，也不能仅列作“待真机测试”。本地网络权限说明用于局域网设备连接；权限声明本身不证明相关功能已可用。
 - `linkremote://` 由现有 `uni_links` 插件处理。`FlutterDeepLinkingEnabled=false` 明确关闭 Flutter 内置处理，避免升级 Flutter 后同一链接被两套处理器消费；不申请未实现的 Universal Links 域名能力。
 - 不声明后台被控服务。系统暂停 App 后不能保证连接持续收发，返回前台的恢复行为须在签名真机验收。
 - iOS 使用会话工具栏的显式剪贴板粘贴；`mChannel` 是 Android 平台通道，不把 Android 的后台剪贴板调用视为 iOS 自动同步已实现。
@@ -102,6 +102,18 @@ Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路�
 - iPad 的上述后三张截图还出现大面积黑色横条；原因尚未定位，不能忽略该视觉异常或把截图存活当成页面正确。
 - 已检索两份 Runner 日志中的首帧标记，以及 Unhandled Exception、LateInitializationError、初始化失败、RenderFlex 溢出、Rust panic 和崩溃信号特征，未发现后者；这不等价于所有错误均已排除。横屏、大字号、深链确认后的行为、真实远控输入、音频、网络恢复和 120 FPS 均未由本轮 Simulator 证据验证。
 
+调整烟测顺序、将系统弹窗移到末尾后，仅做了一次确认：run [`39238496370`](https://github.com/zz315250961/yuan-kong/actions/runs/39238496370)（源码 `295030cdeabed4ef553199d165042095b955aa51`）最终 **failure**。其中 App 编译与产物校验通过，但 UI 检查在 Simulator 基础设施准备阶段超时，尚未执行 App 安装或首帧等待：
+
+- iPhone 16 Pro 的 `simctl bootstatus -b` 在 180 秒后超时，现场 PNG 是 SpringBoard 主屏。
+- iPad Pro 11-inch (M4) 的 `simctl ui appearance light` 在 120 秒后超时，现场 PNG 全黑，非 LinkRemote 页面。
+- 两台的 `failed_stage` 均为 `boot and wait for runtime`、`passed=false`、正常截图列表为空；`url_delivery_verified=false` / `url_delivery_status=not_attempted`。本轮没有新的 8 张 App 截图或 Runner 日志，不能把该结果说成 App 崩溃，也没有复核首轮黑条、无遮挡深色/恢复页面。具体 Simulator 就绪超时根因未定位，不再重跑或放宽断言。
+
+该确认 App 的原始 `ditto` 归档为 `artifacts/v1.0.43-candidate/LinkRemote-1.0.43-ios-simulator-app.zip`（63,880,465 bytes，SHA-256 `7135bff17972ebccd90c4a9f34515dfadb8a2044ab2d0be76daa592f727b2ff4`）；只读复核 ZIP CRC、`iPhoneSimulator` / SDK 18.5 / 最低 iOS 13、`1.0.43 (75)`、x86_64 Mach-O 和执行权限 `100755` 均通过。它只供兼容 Simulator 使用，不是 iPhone/iPad 安装包。
+
+新的官方失败证据未覆盖首轮文件：`LinkRemote-1.0.43-ios-simulator-confirmation-evidence.zip`（artifact `12183015162`，3,081,718 bytes，SHA-256 `a411b4d2320e0b4e8ba297b554155f68a7bcef1320f9499988761e61f4b9c6a7`）。展开目录 `ios-simulator-confirmation-39238496370/` 保留 `report.json`、两张 `*-failure.png`；另保存完整官方 `job.log`，可核对阶段时间与原始超时，清理过程没有覆盖主错误。
+
+后续源码提交 `da10d14` 接入移动设置的 About 入口及离线许可/归属说明；它未进入上述 iOS 二进制，也未进入源码 `295030c` 的 Simulator 确认构建。不能用这些 App/截图宣称新增 About 或许可页面已在 iOS 运行验收。
+
 源配置脚本检查权限说明、横竖屏、深链归属、三个构建配置的包名、部署目标，以及全部 iPhone/iPad/App Store 图标的像素尺寸和无透明通道。可选产物检查还会核对真实包名/版本、iPhoneOS 平台、arm64 Mach-O 和编译后的图标资源。
 
 ## 真机逐项验收
@@ -111,7 +123,8 @@ Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路�
 | 项目 | 操作与通过条件 | 当前状态 |
 | --- | --- | --- |
 | 账号与设备 | 登录/退出/重登、刷新设备、修改名称、删除后刷新；错误密码显示可恢复提示 | 待真机验收 |
-| 连接入口 | ID、扫码、相册识码；相机/照片/本地网络首次允许及拒绝后再次进入均可恢复 | 待真机验收 |
+| ID 连接入口 | 输入 ID 发起连接；本地网络首次允许及拒绝后再次进入均可恢复 | 待真机验收 |
+| 扫码/相册识码入口 | 先接入可达入口与正确连接流程，再验收相机/照片权限允许、拒绝与恢复 | 当前入口未接入，非仅待真机验收 |
 | 深链 | App 关闭和已打开时各点一次 `linkremote://ID`，仅打开一次目标连接；异常 ID 不崩溃 | 待真机验收 |
 | 鼠标 | 触屏/触控板模式的单击、双击、双指右键、长按拖动、双指滚动；右键无多余左键与粘连 | 待真机验收 |
 | 手势区分 | 双指轻点/连续轻点可右键；双指滚动、捏合缩放和中途取消均不误触右键 | 待真机验收 |
