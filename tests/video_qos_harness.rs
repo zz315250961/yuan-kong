@@ -3,7 +3,14 @@ extern crate self as scrap;
 
 use std::collections::HashMap;
 
+#[path = "../libs/scrap/src/common/bitrate_policy.rs"]
+mod bitrate_policy;
+
+// These small types isolate platform/native dependencies only. Their numeric
+// contracts are checked against production by run_video_policy_tests.py.
 pub mod codec {
+    pub use super::bitrate_policy::fps_bitrate_scale;
+
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     pub enum Quality {
         Best,
@@ -24,13 +31,9 @@ pub mod codec {
         }
     }
 
-    pub const BR_BEST: f32 = 3.0;
-    pub const BR_BALANCED: f32 = 1.5;
+    pub const BR_BEST: f32 = 1.5;
+    pub const BR_BALANCED: f32 = 0.67;
     pub const BR_SPEED: f32 = 0.5;
-
-    pub fn fps_bitrate_scale(target_fps: u32) -> f32 {
-        ((target_fps.max(1) as f32 / 30.0).sqrt()).clamp(0.75, 1.45)
-    }
 }
 
 pub fn get_time() -> i64 {
@@ -55,16 +58,16 @@ pub enum ImageQuality {
 impl ImageQuality {
     pub fn value(self) -> i32 {
         match self {
-            Self::Balanced => 1,
+            Self::Balanced => 3,
             Self::Low => 2,
-            Self::Best => 3,
+            Self::Best => 4,
         }
     }
 }
 
 pub mod client {
     pub fn normalize_custom_fps(fps: i32) -> i32 {
-        fps.clamp(10, 60)
+        fps.clamp(10, 120)
     }
 }
 
