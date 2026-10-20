@@ -1743,6 +1743,8 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
     fn on_voice_call_closed(&self, reason: &str);
     #[cfg(target_os = "ios")]
     fn on_voice_call_close_ack(&self) {}
+    #[cfg(target_os = "ios")]
+    fn on_ios_voice_call_session_event(&self, _round: u32, _state: &str, _reason: &str) {}
     fn on_voice_call_waiting(&self);
     fn on_voice_call_incoming(&self);
     fn get_rgba(&self, display: usize) -> *const u8;

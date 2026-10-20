@@ -452,7 +452,8 @@ mod native {
             context.playback.fail(); return result;
         }
         if buffers.mNumberBuffers != 1 || buffers.mBuffers[0].mDataByteSize != frames * 4
-            || buffers.mBuffers[0].mNumberChannels != 1 {
+            || buffers.mBuffers[0].mNumberChannels != 1
+            || buffers.mBuffers[0].mData != context.scratch.as_mut_ptr().cast() {
             context.scratch[..frames as usize].fill(0.0);
             context.playback.fail(); return -50;
         }

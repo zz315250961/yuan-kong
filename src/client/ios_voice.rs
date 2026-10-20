@@ -1,16 +1,15 @@
 //! iOS controller microphone uplink. No server-side audio service is used.
 //!
 //! Swift must authorize and activate AVAudioSession before calling `start`.
-//! The CPAL stream never leaves its owner thread; its real-time callback only
+//! The VoiceProcessingIO never leaves its owner thread; its real-time callback only
 //! copies PCM into a bounded queue. Resampling, Opus and transport run off it.
 
 #[cfg(target_os = "ios")]
 use super::{
     voice_packetizer::{VoicePacketizer, VOICE_SAMPLE_RATE},
-    Data,
+    ios_duplex::{Duplex, Playback},
+    Data, MediaData, MediaSender,
 };
-#[cfg(target_os = "ios")]
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 #[cfg(target_os = "ios")]
 use crossbeam_queue::ArrayQueue;
 #[cfg(target_os = "ios")]
@@ -47,11 +46,67 @@ const CAPTURE_IDLE_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 #[cfg(target_os = "ios")]
 const OPUS_PACKET_BYTES: usize = 1_275;
+#[cfg(target_os = "ios")]
+const PLAYBACK_BIND_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[cfg(target_os = "ios")]
 struct PcmBlock {
     samples: [f32; PCM_BLOCK_SAMPLES],
     len: usize,
+}
+
+/// Created before enqueue: even an unacknowledged/late Bind must eventually
+/// receive its scoped End. A failed startup may not leave normal playback off.
+#[cfg(target_os = "ios")]
+struct PlaybackBinding {
+    sender: MediaSender,
+    epoch: u64,
+    playback: Arc<Playback>,
+    restore: bool,
+}
+
+#[cfg(target_os = "ios")]
+impl Drop for PlaybackBinding {
+    fn drop(&mut self) {
+        self.playback.close();
+        // A closed decoder channel has already dropped its playback route.
+        if self.restore {
+            let _ = self.sender.send(MediaData::IosVoicePlaybackEnd { epoch: self.epoch });
+        }
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn bind_playback(
+    sender: &MediaSender,
+    epoch: u64,
+    playback: Arc<Playback>,
+    stop: &Receiver<()>,
+    cancelled: &AtomicBool,
+) -> Result<PlaybackBinding, String> {
+    let binding = PlaybackBinding { sender: sender.clone(), epoch, playback: playback.clone(), restore: true };
+    let (ack, acknowledged) = mpsc::channel();
+    sender.send(MediaData::IosVoicePlaybackBind { epoch, playback, ack })
+        .map_err(|_| "iOS audio playback decoder is unavailable".to_owned())?;
+    let started = Instant::now();
+    loop {
+        if stopped(stop, cancelled) {
+            return Err("iOS voice playback routing was cancelled".to_owned());
+        }
+        // This bounded wait runs only on the dedicated recorder thread, never
+        // inside the Tokio start future or an AudioUnit real-time callback.
+        match acknowledged.recv_timeout(POLL_INTERVAL) {
+            Ok(true) => return Ok(binding),
+            Ok(false) => return Err("iOS voice playback routing was rejected".to_owned()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("iOS audio playback decoder stopped".to_owned());
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if started.elapsed() >= PLAYBACK_BIND_TIMEOUT {
+            return Err("Timed out preparing iOS voice playback".to_owned());
+        }
+    }
 }
 
 /// Dropping a pending start future also stops its recorder. It must not leave
@@ -196,6 +251,7 @@ pub fn start(
     request_timestamp: i64,
     owner: usize,
     epoch: u64,
+    audio_sender: MediaSender,
 ) -> impl std::future::Future<Output = Result<Sender<()>, String>> + Send {
     let (stop, stop_rx) = mpsc::channel();
     let (ready, ready_rx) = oneshot::channel();
@@ -210,6 +266,9 @@ pub fn start(
         cancelled,
     };
     async move {
+        if super::ios_duplex::is_quarantined() {
+            return Err("iOS audio cleanup failed; restart the app before starting another voice call".to_owned());
+        }
         let Some(registration) = registration else {
             return Err("iOS voice request was cancelled before microphone startup".to_owned());
         };
@@ -227,6 +286,8 @@ pub fn start(
                     &stop_rx,
                     &worker_cancelled,
                     &mut ready,
+                    &audio_sender,
+                    epoch,
                 ) {
                     log::warn!("iOS microphone uplink stopped: {}", reason);
                     if !stopped(&stop_rx, &worker_cancelled) {
@@ -672,24 +733,13 @@ fn record(
     stop: &Receiver<()>,
     cancelled: &Arc<AtomicBool>,
     ready: &mut Option<oneshot::Sender<Result<(), String>>>,
+    audio_sender: &MediaSender,
+    epoch: u64,
 ) -> Result<(), String> {
     if stopped(stop, cancelled) || sender.is_closed() {
         return Ok(());
     }
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "No iOS microphone input device is available".to_owned())?;
-    let supported = device
-        .default_input_config()
-        .map_err(|error| format!("Cannot read iOS microphone format: {}", error))?;
-    if stopped(stop, cancelled) {
-        return Ok(());
-    }
-    if supported.sample_format() != cpal::SampleFormat::F32 {
-        return Err("Unsupported iOS microphone PCM format; expected float32".to_owned());
-    }
-    let mut packetizer = VoicePacketizer::new(supported.sample_rate().0, supported.channels())
+    let mut packetizer = VoicePacketizer::new(VOICE_SAMPLE_RATE, 1)
         .map_err(str::to_owned)?;
     let mut encoder = Encoder::new(VOICE_SAMPLE_RATE, Channels::Mono, Application::Voip)
         .map_err(|error| format!("Cannot create voice encoder: {}", error))?;
@@ -705,20 +755,17 @@ fn record(
 
     let queue = Arc::new(ArrayQueue::<PcmBlock>::new(PCM_QUEUE_BLOCKS));
     let dropped = Arc::new(AtomicUsize::new(0));
-    let stream_failed = Arc::new(AtomicBool::new(false));
+    let playback = Playback::new(cancelled.clone());
+    let mut binding = bind_playback(audio_sender, epoch, playback.clone(), stop, cancelled)?;
     let capture_queue = queue.clone();
     let capture_dropped = dropped.clone();
     let capture_cancelled = cancelled.clone();
-    let callback_failed = stream_failed.clone();
-    let config = cpal::StreamConfig {
-        channels: supported.channels(),
-        sample_rate: supported.sample_rate(),
-        buffer_size: cpal::BufferSize::Default,
-    };
-    let stream = device
-        .build_input_stream::<f32, _, _>(
-            &config,
-            move |data, _| {
+    // An error is not proof that Apple's partially initialized unit disposed.
+    // Stay fail-closed unless an explicit stop confirms complete teardown.
+    binding.restore = false;
+    let starting = Duplex::start(
+            playback.clone(),
+            move |data| {
                 // Real-time boundary: fixed stack block, copy, bounded queue.
                 // No allocations, locks, Opus, logging, or network sends here.
                 if capture_cancelled.load(Ordering::Acquire) {
@@ -735,21 +782,20 @@ fn record(
                     }
                 }
             },
-            move |_| callback_failed.store(true, Ordering::Release),
-            None,
-        )
-        .map_err(|error| format!("Cannot open iOS microphone stream: {}", error))?;
+        );
+    if starting.is_err() {
+        binding.restore = playback.is_native_released() && super::ios_duplex::playback_can_restore();
+    }
+    let mut stream = starting?;
     // Keep this non-Send platform stream in the same worker until teardown.
     if stopped(stop, cancelled) {
+        let cleanup = stream.stop();
+        binding.restore = cleanup.is_ok() && playback.is_native_released() && super::ios_duplex::playback_can_restore();
         drop(stream);
         while queue.pop().is_some() {}
         packetizer.reset();
-        return Ok(());
+        return cleanup;
     }
-    stream
-        .play()
-        .map_err(|error| format!("Cannot start iOS microphone stream: {}", error))?;
-
     let mut output = [0u8; OPUS_PACKET_BYTES];
     let pending_messages = Arc::new(AtomicUsize::new(0));
     let mut dropped_seen = 0;
@@ -759,8 +805,11 @@ fn record(
             if stopped(stop, cancelled) || sender.is_closed() {
                 return Ok(());
             }
-            if stream_failed.load(Ordering::Acquire) {
+            if playback.is_failed() {
                 return Err("iOS microphone stream reported a device error".to_owned());
+            }
+            if playback.is_cancelled() {
+                return Err("iOS voice playback route was closed".to_owned());
             }
             let dropped_now = dropped.load(Ordering::Acquire);
             if dropped_now != dropped_seen {
@@ -773,13 +822,13 @@ fn record(
             if let Some(mut block) = queue.pop() {
                 last_audio = Instant::now();
                 packetizer.push(&block.samples[..block.len], |frame| {
-                    if stopped(stop, cancelled) || stream_failed.load(Ordering::Acquire) {
+                    if stopped(stop, cancelled) || playback.is_failed() || playback.is_cancelled() {
                         return Err("iOS microphone recording was interrupted".to_owned());
                     }
                     let length = encoder
                         .encode_float(frame, &mut output)
                         .map_err(|error| format!("Cannot encode microphone audio: {}", error))?;
-                    if stopped(stop, cancelled) || stream_failed.load(Ordering::Acquire) {
+                    if stopped(stop, cancelled) || playback.is_failed() || playback.is_cancelled() {
                         return Err("iOS microphone recording was interrupted".to_owned());
                     }
                     if length == 0 || length > output.len() {
@@ -824,8 +873,14 @@ fn record(
         }
     })();
     // Stop callbacks first, then discard queued PCM and partial packet state.
+    let cleanup = stream.stop();
+    binding.restore = cleanup.is_ok() && playback.is_native_released() && super::ios_duplex::playback_can_restore();
     drop(stream);
     while queue.pop().is_some() {}
     packetizer.reset();
-    result
+    match (result, cleanup) {
+        (Err(reason), _) => Err(reason),
+        (Ok(()), Err(reason)) => Err(reason),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }

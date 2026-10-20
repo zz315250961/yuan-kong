@@ -13,6 +13,7 @@ class VoiceSourceContractTest(unittest.TestCase):
         for relative in (
             "tests/ios_voice_packetizer_harness.rs", "src/client/voice_packetizer.rs",
             "src/client/ios_voice.rs",
+            "src/client/ios_audio_credit.rs", "src/client.rs",
             "src/ui_session_interface.rs",
             "src/client/io_loop.rs",
             "src/flutter.rs",
@@ -29,7 +30,7 @@ class VoiceSourceContractTest(unittest.TestCase):
     def replace(self, relative, before, after):
         path = self.root / relative
         source = path.read_text(encoding="utf-8")
-        self.assertIn(before, source)
+        self.assertTrue(before in source, f"Mutation anchor missing: {relative}: {before}")
         path.write_text(source.replace(before, after), encoding="utf-8")
 
     def test_current_contract_matches(self):
@@ -56,7 +57,7 @@ class VoiceSourceContractTest(unittest.TestCase):
             check_sources(self.root)
 
     def test_no_server_audio_service_can_be_added_to_ios(self):
-        self.replace("src/client/ios_voice.rs", "let host = cpal::default_host();", "let host = cpal::default_host();\n    audio_service::new();")
+        self.replace("src/client/ios_voice.rs", "let playback = Playback::new(cancelled.clone());", "let playback = Playback::new(cancelled.clone());\n    audio_service::new();")
         with self.assertRaisesRegex(ValueError, "must not depend on a server"):
             check_sources(self.root)
 
@@ -93,8 +94,8 @@ class VoiceSourceContractTest(unittest.TestCase):
     def test_cancelled_worker_cannot_publish_late_ready_after_encoding(self):
         self.replace(
             "src/client/ios_voice.rs",
-            "if stopped(stop, cancelled) || stream_failed.load(Ordering::Acquire) {",
-            "if stream_failed.load(Ordering::Acquire) {",
+            "if stopped(stop, cancelled) || playback.is_failed() || playback.is_cancelled() {",
+            "if playback.is_failed() || playback.is_cancelled() {",
         )
         with self.assertRaisesRegex(ValueError, "checked again after encoding"):
             check_sources(self.root)
@@ -193,32 +194,32 @@ class VoiceSourceContractTest(unittest.TestCase):
             check_sources(self.root)
 
     def test_close_ack_cannot_be_missing_for_an_idle_close(self):
-        self.replace("src/client/io_loop.rs", "self.handler.on_voice_call_close_ack();", "if had_voice_call { self.handler.on_voice_call_close_ack(); }")
+        self.replace("src/client/io_loop.rs", 'self.ios_voice_event("close_ack", "");', 'if had_voice_call { self.ios_voice_event("close_ack", ""); }')
         with self.assertRaisesRegex(ValueError, "always follow local stop"):
             check_sources(self.root)
 
     def test_close_ack_cannot_wait_for_a_blocked_network_write(self):
-        self.replace("src/client/io_loop.rs", "self.handler.on_voice_call_close_ack();\n                allow_err!(peer.send(&msg).await);", "allow_err!(peer.send(&msg).await);\n                self.handler.on_voice_call_close_ack();")
+        self.replace("src/client/io_loop.rs", 'self.ios_voice_event("close_ack", "");\n                allow_err!(peer.send(&msg).await);', 'allow_err!(peer.send(&msg).await);\n                self.ios_voice_event("close_ack", "");')
         with self.assertRaisesRegex(ValueError, "precede network await"):
             check_sources(self.root)
 
     def test_close_ack_must_not_reuse_the_closed_event_name(self):
-        self.replace("src/flutter.rs", 'self.push_event::<&str>("on_voice_call_close_ack", &[], &[]);', 'self.push_event::<&str>("on_voice_call_closed", &[], &[]);')
-        with self.assertRaisesRegex(ValueError, "same Flutter session stream"):
+        self.replace("src/flutter.rs", '("round", round.to_string().as_str())', '("round", "0")')
+        with self.assertRaisesRegex(ValueError, "round/state/reason"):
             check_sources(self.root)
 
     def test_model_must_dispatch_the_close_ack_to_chat_barrier(self):
-        self.replace("flutter/lib/models/model.dart", "parent.target?.chatModel.onVoiceCallCloseAck();", "parent.target?.chatModel.onVoiceCallClosed('');")
-        with self.assertRaisesRegex(ValueError, "dispatch must synchronously"):
+        self.replace("flutter/lib/models/model.dart", "final round = int.tryParse(evt['round'] ?? '');", "final round = 0;")
+        with self.assertRaisesRegex(ValueError, "validate the round"):
             check_sources(self.root)
 
     def test_chat_close_cannot_finish_after_enqueue_without_real_ack(self):
-        self.replace("flutter/lib/models/chat_model.dart", "if (pending != null && !_voiceDisposed) await pending.future;", "// FFI enqueue only")
+        self.replace("flutter/lib/utils/ios_voice_call.dart", "if (!_disposed && !_ended && round == _round) await pending.future;", "// FFI enqueue only")
         with self.assertRaisesRegex(ValueError, "await the real ack"):
             check_sources(self.root)
 
     def test_chat_cannot_register_ack_after_close_was_enqueued(self):
-        self.replace("flutter/lib/models/chat_model.dart", "_iosVoiceCloseAck = pending;", "// barrier registered too late")
+        self.replace("flutter/lib/utils/ios_voice_call.dart", "_closeAck = pending;", "// barrier registered too late")
         with self.assertRaisesRegex(ValueError, "register its close barrier before FFI"):
             check_sources(self.root)
 
@@ -230,6 +231,121 @@ class VoiceSourceContractTest(unittest.TestCase):
     def test_coordinator_cannot_allow_redial_while_close_ack_is_pending(self):
         self.replace("flutter/lib/utils/ios_voice_call.dart", "_disposed || _requesting || _active || _stopping", "_disposed || _requesting || _active")
         with self.assertRaisesRegex(ValueError, "redial must remain fenced"):
+            check_sources(self.root)
+
+    def test_terminal_round_cannot_leave_an_ack_waiting_for_an_exited_loop(self):
+        self.replace("flutter/lib/utils/ios_voice_call.dart", "    _acknowledgeClose();\n    final call = _call;", "    final call = _call;")
+        with self.assertRaisesRegex(ValueError, "release its dead-loop ack"):
+            check_sources(self.root)
+
+    def test_new_round_cannot_overtake_retired_ffi_requests(self):
+        self.replace("flutter/lib/utils/ios_voice_call.dart", "_disposed || _ended || _retiring != null", "_disposed || _ended")
+        with self.assertRaisesRegex(ValueError, "retired FFI operations"):
+            check_sources(self.root)
+
+    def test_chat_cannot_apply_old_round_events_before_validation(self):
+        self.replace("flutter/lib/models/chat_model.dart", "if (!_iosVoiceSession!.event(round, state, reason)) return;", "// unscoped events")
+        with self.assertRaisesRegex(ValueError, "reject stale voice rounds"):
+            check_sources(self.root)
+
+    def test_remote_abort_cannot_omit_terminal_notification(self):
+        self.replace("src/client/io_loop.rs", "self.end_ios_voice_session();", "// terminal missing")
+        with self.assertRaisesRegex(ValueError, "Disconnect must stop capture"):
+            check_sources(self.root)
+
+    def test_terminal_round_cannot_be_emitted_repeatedly_from_drop(self):
+        self.replace("src/client/io_loop.rs", "self.ios_voice_round.take()", "self.ios_voice_round")
+        with self.assertRaisesRegex(ValueError, "take its round exactly once"):
+            check_sources(self.root)
+
+    def test_muted_downlink_cannot_claim_a_duplex_call(self):
+        self.replace("src/client/io_loop.rs", "if self.handler.lc.read().unwrap().disable_audio.v {", "if false {")
+        with self.assertRaisesRegex(ValueError, "Muted iOS downlink must fail closed"):
+            check_sources(self.root)
+
+    def test_ios_notifications_cannot_fall_back_to_unscoped_events(self):
+        self.replace("src/client/io_loop.rs", 'self.ios_voice_event("connected", "");', 'self.handler.on_voice_call_started();')
+        with self.assertRaisesRegex(ValueError, "scope iOS while preserving"):
+            check_sources(self.root)
+
+    def test_binding_guard_cannot_be_created_only_after_enqueue(self):
+        self.replace("src/client/ios_voice.rs", "let binding = PlaybackBinding {", "let guard_created_too_late = PlaybackBinding {")
+        with self.assertRaisesRegex(ValueError, "guard before enqueue"):
+            check_sources(self.root)
+
+    def test_worker_binding_ack_cannot_wait_without_a_deadline(self):
+        self.replace("src/client/ios_voice.rs", "started.elapsed() >= PLAYBACK_BIND_TIMEOUT", "false")
+        with self.assertRaisesRegex(ValueError, "bounded decoder acknowledgement"):
+            check_sources(self.root)
+
+    def test_native_start_failure_cannot_unconditionally_restore_normal_audio(self):
+        self.replace("src/client/ios_voice.rs", "binding.restore = false;", "binding.restore = true;")
+        with self.assertRaisesRegex(ValueError, "uncertain startup"):
+            check_sources(self.root)
+
+    def test_capture_cannot_revert_to_an_independent_remoteio(self):
+        self.replace("src/client/ios_voice.rs", "let starting = Duplex::start(", "let starting = cpal::default_host();\n    let starting = Duplex::start(")
+        with self.assertRaisesRegex(ValueError, "shared VoiceProcessingIO"):
+            check_sources(self.root)
+
+    def test_native_teardown_failure_cannot_restore_normal_audio(self):
+        self.replace("src/client/ios_voice.rs", "binding.restore = cleanup.is_ok()", "binding.restore = true")
+        with self.assertRaisesRegex(ValueError, "confirmed native duplex teardown"):
+            check_sources(self.root)
+
+    def test_uncertain_teardown_cannot_send_an_unconditional_end(self):
+        self.replace("src/client/ios_voice.rs", "if self.restore {", "if true {")
+        with self.assertRaisesRegex(ValueError, "quarantine playback"):
+            check_sources(self.root)
+
+    def test_quarantined_audio_cannot_start_another_device(self):
+        self.replace("src/client/ios_voice.rs", "if super::ios_duplex::is_quarantined() {", "if false {")
+        with self.assertRaisesRegex(ValueError, "reject another call"):
+            check_sources(self.root)
+
+    def test_old_mobile_stream_cannot_deliver_terminal_for_new_session(self):
+        self.replace("flutter/lib/models/model.dart", "closed || streamGeneration != _sessionStreamGeneration", "closed")
+        with self.assertRaisesRegex(ValueError, "ignore events from its previous UI stream"):
+            check_sources(self.root)
+
+    def test_local_ui_close_cannot_rely_on_an_already_ignored_terminal_event(self):
+        self.replace("flutter/lib/models/model.dart", "    chatModel.onRemoteSessionClosed();\n    closed = true;", "    closed = true;")
+        with self.assertRaisesRegex(ValueError, "end voice before terminal stream events are ignored"):
+            check_sources(self.root)
+
+    def test_harness_cannot_omit_production_downlink_credit_tests(self):
+        self.replace("tests/ios_voice_packetizer_harness.rs", "mod ios_audio_credit;", "mod another_credit;")
+        with self.assertRaisesRegex(ValueError, "production downlink frame credits"):
+            check_sources(self.root)
+
+    def test_harness_cannot_copy_the_credit_implementation(self):
+        self.replace("tests/ios_voice_packetizer_harness.rs", "mod ios_audio_credit;", "mod ios_audio_credit;\nstruct AudioFrameCredit;")
+        with self.assertRaisesRegex(ValueError, "must not copy the downlink credit"):
+            check_sources(self.root)
+
+    def test_decoder_backlog_cannot_raise_its_six_frame_limit(self):
+        self.replace("src/client/ios_audio_credit.rs", "MAX_PENDING_AUDIO_FRAMES: usize = 6", "MAX_PENDING_AUDIO_FRAMES: usize = 1000")
+        with self.assertRaisesRegex(ValueError, "bound six frames"):
+            check_sources(self.root)
+
+    def test_decoder_cannot_leak_frame_credits_on_drop(self):
+        self.replace("src/client/ios_audio_credit.rs", "self.0.fetch_sub(1, Ordering::Release);", "// leaked credit")
+        with self.assertRaisesRegex(ValueError, "return on Drop"):
+            check_sources(self.root)
+
+    def test_downlink_cannot_enqueue_without_reserving_its_credit(self):
+        self.replace("src/client/io_loop.rs", "AudioFrameCredit::reserve(&self.ios_audio_pending)", "AudioFrameCredit::reserve(&Arc::new(AtomicUsize::new(0)))")
+        with self.assertRaisesRegex(ValueError, "reserve credit before enqueue"):
+            check_sources(self.root)
+
+    def test_decoder_cannot_release_credit_before_decoding_finishes(self):
+        self.replace("src/client.rs", "audio_handler.handle_frame(*frame);", "drop(_credit);\n                        audio_handler.handle_frame(*frame);")
+        with self.assertRaisesRegex(ValueError, "retain the downlink credit"):
+            check_sources(self.root)
+
+    def test_new_audio_format_cannot_bypass_native_quarantine(self):
+        self.replace("src/client.rs", "if !ios_duplex::playback_can_restore() {", "if false {")
+        with self.assertRaisesRegex(ValueError, "unresolved VoiceProcessingIO ownership"):
             check_sources(self.root)
 
 

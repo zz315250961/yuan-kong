@@ -244,7 +244,7 @@ void main() {
         reason: 'Audio policy cleanup must not wait for queued Rust close');
     expect(await controller.request(), isFalse);
     // The old closed event precedes its acknowledgement on the same stream.
-    await controller.stop(sendClose: false);
+    unawaited(controller.stop(sendClose: false));
     expect(await controller.request(), isFalse);
     acknowledged.complete();
     await stopping;
@@ -287,5 +287,266 @@ void main() {
     acknowledged.complete();
     await stopping;
     expect(await controller.request(), isTrue);
+  });
+
+  test('terminal connection round releases a close whose I/O loop has exited',
+      () async {
+    controller.dispose();
+    final session = IosVoiceCallSession(
+      owner: 'terminal-session',
+      requestCall: () async => requests++,
+      closeCall: () async => closes++,
+      onError: errors.add,
+    );
+    addTearDown(session.dispose);
+    expect(session.event(1, 'started'), isTrue);
+    expect(await session.request(), isTrue);
+    final closing = session.close();
+    await Future<void>.delayed(Duration.zero);
+    expect(closes, 1);
+    var completed = false;
+    unawaited(closing.then((_) => completed = true));
+    expect(session.event(1, 'ended'), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, isTrue,
+        reason: 'An exited loop can never deliver its queued close ack');
+    expect(calls.last.method, 'end');
+    expect(await session.request(), isFalse);
+    expect(session.event(2, 'started'), isTrue);
+    expect(await session.request(), isTrue);
+  });
+
+  IosVoiceCallSession session({
+    Future<void> Function()? request,
+    Future<void> Function()? close,
+  }) {
+    final result = IosVoiceCallSession(
+      owner: 'round-session',
+      requestCall: request ?? () async => requests++,
+      closeCall: close ?? () async => closes++,
+      onError: errors.add,
+    );
+    addTearDown(result.dispose);
+    return result;
+  }
+
+  test('old round close, ack and terminal cannot release a newer call',
+      () async {
+    final current = session();
+    expect(current.event(8, 'started'), isTrue);
+    expect(await current.request(), isTrue);
+    expect(current.event(9, 'started'), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(await current.request(), isTrue);
+    final owner = calls.last.arguments['owner'];
+    final closing = current.close();
+    await Future<void>.delayed(Duration.zero);
+    for (final state in [
+      'ended',
+      'closed',
+      'close_ack',
+      'connected',
+      'started'
+    ]) {
+      expect(current.event(8, state), isFalse);
+    }
+    expect(await current.request(), isFalse,
+        reason: 'A stale ack cannot release the new round close barrier');
+    expect(
+        calls.where((call) => call.method == 'prepare').last.arguments['owner'],
+        owner);
+    expect(current.event(9, 'close_ack'), isTrue);
+    await closing;
+    expect(await current.request(), isTrue);
+  });
+
+  test('terminal round drains a delayed request before allowing reconnect',
+      () async {
+    final enqueued = Completer<void>();
+    var first = true;
+    final current = session(request: () {
+      requests++;
+      if (first) {
+        first = false;
+        return enqueued.future;
+      }
+      return Future<void>.value();
+    });
+    current.event(1, 'started');
+    final requesting = current.request();
+    await Future<void>.delayed(Duration.zero);
+    current.event(1, 'ended');
+    current.event(2, 'started');
+    expect(await current.request(), isFalse);
+    expect(calls.last.method, 'end');
+    enqueued.complete();
+    expect(await requesting, isFalse);
+    await Future<void>.delayed(Duration.zero);
+    expect(closes, 0,
+        reason:
+            'No close may be enqueued into the new round for an old request');
+    expect(await current.request(), isTrue);
+  });
+
+  test('terminal round drains a delayed close FFI before reconnect', () async {
+    final enqueued = Completer<void>();
+    final current = session(close: () {
+      closes++;
+      return enqueued.future;
+    });
+    current.event(1, 'started');
+    expect(await current.request(), isTrue);
+    final closing = current.close();
+    await Future<void>.delayed(Duration.zero);
+    current.event(1, 'ended');
+    current.event(2, 'started');
+    expect(await current.request(), isFalse);
+    expect(calls.last.method, 'end');
+    enqueued.complete();
+    await closing;
+    await Future<void>.delayed(Duration.zero);
+    expect(await current.request(), isTrue);
+  });
+
+  test('terminal during permission cannot start a late request after reconnect',
+      () async {
+    final permission = Completer<bool>();
+    var first = true;
+    native = (call) async {
+      if (call.method != 'prepare') return null;
+      if (first) {
+        first = false;
+        return permission.future;
+      }
+      return true;
+    };
+    final current = session();
+    current.event(1, 'started');
+    final requesting = current.request();
+    await Future<void>.delayed(Duration.zero);
+    current.event(1, 'ended');
+    current.event(2, 'started');
+    await Future<void>.delayed(Duration.zero);
+    expect(await current.request(), isTrue);
+    final owner = calls.last.arguments['owner'];
+    permission.complete(true);
+    expect(await requesting, isFalse);
+    expect(calls.last.arguments['owner'], isNot(owner));
+    expect(requests, 1);
+  });
+
+  test(
+      'round counter wraps once but duplicate or invalid starts cannot revive it',
+      () async {
+    final current = session();
+    expect(await current.request(), isFalse);
+    expect(current.event(0xffffffff, 'started'), isTrue);
+    expect(current.event(0xffffffff, 'ended'), isTrue);
+    expect(current.event(0xffffffff, 'started'), isFalse);
+    expect(current.event(0, 'started'), isTrue);
+    expect(current.event(0xffffffff, 'ended'), isFalse);
+    expect(current.event(-1, 'started'), isFalse);
+    expect(current.event(0x100000000, 'started'), isFalse);
+    expect(current.event(0, 'invalid'), isFalse);
+    expect(await current.request(), isTrue);
+  });
+
+  test('a scoped failed request releases audio and cannot become connected',
+      () async {
+    final current = session();
+    current.event(1, 'started');
+    expect(await current.request(), isTrue);
+    expect(current.event(0, 'failed', 'old error'), isFalse);
+    expect(errors, isEmpty);
+    expect(current.event(1, 'failed', '请先启用远程声音再发起语音。'), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(errors.single, contains('启用远程声音'));
+    expect(calls.last.method, 'end');
+    expect(closes, 0);
+    expect(current.event(1, 'connected'), isFalse);
+  });
+
+  test('closing the UI locally releases audio even after stream events stop',
+      () async {
+    final current = session();
+    current.event(4, 'started');
+    expect(await current.request(), isTrue);
+    final closing = current.close();
+    await Future<void>.delayed(Duration.zero);
+    current.end();
+    await closing;
+    await Future<void>.delayed(Duration.zero);
+    expect(calls.last.method, 'end');
+    expect(await current.request(), isFalse);
+  });
+
+  test('reused mobile session resets rounds without skipping retired FFI',
+      () async {
+    final enqueued = Completer<void>();
+    final current = session(close: () => enqueued.future);
+    current.event(4, 'started');
+    expect(await current.request(), isTrue);
+    final closing = current.close();
+    await Future<void>.delayed(Duration.zero);
+    current.end();
+    current.reset();
+    expect(current.event(1, 'started'), isTrue);
+    expect(await current.request(), isFalse);
+    enqueued.complete();
+    await closing;
+    await Future<void>.delayed(Duration.zero);
+    expect(await current.request(), isTrue);
+  });
+
+  test(
+      'failed native policy restoration asks for restart without remote request',
+      () async {
+    native = (call) async {
+      if (call.method == 'prepare') {
+        throw PlatformException(code: 'audio_cleanup_failed');
+      }
+      return null;
+    };
+    expect(await controller.request(), isFalse);
+    expect(requests, 0);
+    expect(errors.single, contains('重启应用'));
+    expect(calls.last.method, 'end');
+  });
+
+  test('simultaneous stops join the same acknowledgement barrier', () async {
+    controller.dispose();
+    final acknowledged = Completer<void>();
+    controller = IosVoiceCallCoordinator(
+      owner: 'joining-stops',
+      requestCall: () async => requests++,
+      closeCall: () {
+        closes++;
+        return acknowledged.future;
+      },
+      onError: errors.add,
+    );
+    expect(await controller.request(), isTrue);
+    final first = controller.stop();
+    final second = controller.stop(sendClose: false);
+    expect(identical(first, second), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(closes, 1);
+    expect(calls.last.method, 'end');
+    acknowledged.complete();
+    await Future.wait([first, second]);
+  });
+
+  test('failed close transport releases native state and allows explicit retry',
+      () async {
+    final current = session(close: () async {
+      closes++;
+      throw StateError('session no longer exists');
+    });
+    current.event(1, 'started');
+    expect(await current.request(), isTrue);
+    await current.close();
+    expect(calls.last.method, 'end');
+    expect(closes, 1);
+    expect(await current.request(), isTrue);
   });
 }

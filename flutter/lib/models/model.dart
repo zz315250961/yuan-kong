@@ -430,8 +430,13 @@ class FfiModel with ChangeNotifier {
         // Voice call is closed with reason.
         final reason = evt['reason'].toString();
         parent.target?.chatModel.onVoiceCallClosed(reason);
-      } else if (name == 'on_voice_call_close_ack') {
-        parent.target?.chatModel.onVoiceCallCloseAck();
+      } else if (name == 'on_ios_voice_call_session_event') {
+        final round = int.tryParse(evt['round'] ?? '');
+        if (round != null) {
+          parent.target?.chatModel
+              .onIosVoiceCallSessionEvent(
+                  round, evt['state'] ?? '', evt['reason'] ?? '');
+        }
       } else if (name == 'on_voice_call_incoming') {
         // Voice call is requested by the peer.
         parent.target?.chatModel.onVoiceCallIncoming();
@@ -3700,6 +3705,7 @@ class FFI {
   var version = '';
   var connType = ConnType.defaultConn;
   var closed = false;
+  int _sessionStreamGeneration = 0;
 
   /// dialogManager use late to ensure init after main page binding [globalKey]
   late final dialogManager = OverlayDialogManager();
@@ -3790,6 +3796,8 @@ class FFI {
     int? display,
     List<int>? displays,
   }) {
+    final streamGeneration = ++_sessionStreamGeneration;
+    chatModel.resetIosVoiceCallSession();
     closed = false;
     if (isMobile) mobileReset();
     assert(
@@ -3895,7 +3903,7 @@ class FFI {
     final SimpleWrapper<bool> isToNewWindowNotified = SimpleWrapper(false);
     // Preserved for the rgba data.
     stream.listen((message) {
-      if (closed) return;
+      if (closed || streamGeneration != _sessionStreamGeneration) return;
       if (tabWindowId != null && !isToNewWindowNotified.value) {
         // Session is read to be moved to a new window.
         // Get the cached data and handle the cached data.
@@ -3924,6 +3932,7 @@ class FFI {
       () async {
         if (message is EventToUI_Event) {
           if (message.field0 == "close") {
+            chatModel.onRemoteSessionClosed();
             closed = true;
             debugPrint('Exit session event loop');
             return;
@@ -4026,6 +4035,7 @@ class FFI {
 
   /// Close the remote session.
   Future<void> close({bool closeSession = true}) async {
+    chatModel.onRemoteSessionClosed();
     closed = true;
     chatModel.close();
     // Close all terminal models

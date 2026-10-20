@@ -13,6 +13,7 @@ final class LinkRemoteVoiceSession {
   private var pendingResult: FlutterResult?
   private var previous: AudioPolicy?
   private var restoring = false
+  private var restorationFailure: AudioPolicy?
   private var observers: [NSObjectProtocol] = []
 
   init(messenger: FlutterBinaryMessenger) {
@@ -69,6 +70,12 @@ final class LinkRemoteVoiceSession {
   }
 
   private func prepare(owner key: String, result: @escaping FlutterResult) {
+    guard restorationFailure == nil else {
+      result(FlutterError(code: "audio_cleanup_failed",
+                         message: "Previous audio cleanup failed. Restart the app before another voice call.",
+                         details: nil))
+      return
+    }
     guard owner == nil && !restoring else {
       result(FlutterError(code: "busy", message: "A voice call is already preparing or active", details: nil))
       return
@@ -146,16 +153,20 @@ final class LinkRemoteVoiceSession {
       }
       try audio.setCategory(saved.0, mode: saved.1, options: saved.2)
       if !deactivate { try audio.setActive(true) }
+      restorationFailure = nil
       restoring = false
     } catch {
-      // CPAL's cancelled stream may take a callback to finish shutting down.
+      // The cancelled audio device may take a callback to finish shutting down.
       // Retry cleanup briefly, never reacquire the microphone or restart a call.
       if attempt < 3 {
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
           self?.restore(saved, token: token, deactivate: deactivate, attempt: attempt + 1)
         }
       } else {
-        restoring = false
+        // Retain the original policy and keep preparation fenced. Saving the
+        // still-active voice policy as a later call's "previous" would lose it.
+        restorationFailure = saved
+        restoring = true
         NSLog("LinkRemote voice audio-session cleanup failed: %@", error.localizedDescription)
       }
     }

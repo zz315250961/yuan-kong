@@ -67,8 +67,7 @@ class ChatModel with ChangeNotifier {
   final Rx<VoiceCallStatus> _voiceCallStatus = Rx(VoiceCallStatus.notStarted);
 
   Rx<VoiceCallStatus> get voiceCallStatus => _voiceCallStatus;
-  IosVoiceCallCoordinator? _iosVoiceCall;
-  Completer<void>? _iosVoiceCloseAck;
+  IosVoiceCallSession? _iosVoiceSession;
   bool _voiceDisposed = false;
 
   TextEditingController textController = TextEditingController();
@@ -85,8 +84,7 @@ class ChatModel with ChangeNotifier {
   @override
   void dispose() {
     _voiceDisposed = true;
-    _iosVoiceCall?.dispose();
-    onVoiceCallCloseAck();
+    _iosVoiceSession?.dispose();
     textController.dispose();
     super.dispose();
   }
@@ -535,7 +533,6 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallStarted() {
     _voiceCallStatus.value = VoiceCallStatus.connected;
-    if (isIOS) _iosVoiceCall?.connected();
     if (isAndroid) {
       parent.target?.invokeMethod("on_voice_call_started");
     }
@@ -543,9 +540,6 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallClosed(String reason) {
     _voiceCallStatus.value = VoiceCallStatus.notStarted;
-    if (isIOS) {
-      unawaited(_iosVoiceCall?.stop(sendClose: false) ?? Future<void>.value());
-    }
     if (isAndroid) {
       // We can always invoke "on_voice_call_closed"
       // no matter if the `_voiceCallStatus` was `VoiceCallStatus.notStarted` or not.
@@ -553,22 +547,22 @@ class ChatModel with ChangeNotifier {
     }
   }
 
-  void onVoiceCallCloseAck() {
-    final pending = _iosVoiceCloseAck;
-    _iosVoiceCloseAck = null;
-    if (pending != null && !pending.isCompleted) pending.complete();
-  }
-
-  Future<void> _closeIosVoiceCall() async {
-    // Rust emits this independent acknowledgement after clearing local voice
-    // state, after any old closed event, and before awaiting the network write.
-    final pending = _voiceDisposed ? null : Completer<void>();
-    _iosVoiceCloseAck = pending;
-    try {
-      await bind.sessionCloseVoiceCall(sessionId: sessionId);
-      if (pending != null && !_voiceDisposed) await pending.future;
-    } finally {
-      if (identical(_iosVoiceCloseAck, pending)) _iosVoiceCloseAck = null;
+  void onIosVoiceCallSessionEvent(int round, String state, String reason) {
+    if (!isIOS || _voiceDisposed) return;
+    _iosVoiceSession ??= IosVoiceCallSession(
+      owner: sessionId.toString(),
+      requestCall: () => bind.sessionRequestVoiceCall(sessionId: sessionId),
+      closeCall: () => bind.sessionCloseVoiceCall(sessionId: sessionId),
+      onError: (message) => showToast(message),
+    );
+    if (!_iosVoiceSession!.event(round, state, reason)) return;
+    if (state == 'connected') {
+      _voiceCallStatus.value = VoiceCallStatus.connected;
+    } else if (state == 'waiting') {
+      _voiceCallStatus.value = VoiceCallStatus.waitingForResponse;
+    } else if (state == 'closed' || state == 'failed' ||
+        state == 'ended' || state == 'started') {
+      _voiceCallStatus.value = VoiceCallStatus.notStarted;
     }
   }
 
@@ -578,27 +572,33 @@ class ChatModel with ChangeNotifier {
     }
   }
 
+  void onRemoteSessionClosed() {
+    if (!isIOS) return;
+    _iosVoiceSession?.end();
+    _voiceCallStatus.value = VoiceCallStatus.notStarted;
+  }
+
+  void resetIosVoiceCallSession() {
+    if (!isIOS) return;
+    _iosVoiceSession?.reset();
+    _voiceCallStatus.value = VoiceCallStatus.notStarted;
+  }
+
   Future<void> requestVoiceCall() async {
     if (_voiceDisposed) return;
     if (!isIOS) {
       await bind.sessionRequestVoiceCall(sessionId: sessionId);
       return;
     }
-    _iosVoiceCall ??= IosVoiceCallCoordinator(
-      owner: sessionId.toString(),
-      requestCall: () => bind.sessionRequestVoiceCall(sessionId: sessionId),
-      closeCall: _closeIosVoiceCall,
-      onError: (message) => showToast(message),
-    );
-    // RemoteIO provides duplex transport, not acoustic echo cancellation.
-    // Keep the limitation visible until speakerphone quality is device-tested.
+    // Apple voice processing is wired in Rust, but speakerphone quality still
+    // requires real-device validation. Do not promise acoustic acceptance here.
     showToast('语音通话建议佩戴耳机，以减少免提回声。');
-    await _iosVoiceCall!.request();
+    await _iosVoiceSession?.request();
   }
 
   Future<void> closeVoiceCall() async {
-    if (isIOS && _iosVoiceCall != null) {
-      await _iosVoiceCall!.stop();
+    if (isIOS) {
+      await _iosVoiceSession?.close();
     } else {
       await bind.sessionCloseVoiceCall(sessionId: sessionId);
     }

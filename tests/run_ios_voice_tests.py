@@ -20,7 +20,7 @@ HARNESS = "tests/ios_voice_packetizer_harness.rs"
 
 
 def callback_body(source):
-    marker = "move |data, _| {"
+    marker = "move |data| {"
     start = source.find(marker)
     if start < 0:
         raise ValueError("Missing typed microphone PCM callback")
@@ -42,7 +42,7 @@ def method_body(source, name):
     for index in range(start, len(source)):
         depth += (source[index] == "{") - (source[index] == "}")
         if depth == 0:
-            return re.sub(r"\s+", "", source[start:index])
+            return re.sub(r"\s+", "", re.sub(r"//[^\n]*", "", source[start:index]))
     raise ValueError(f"Unclosed session method: {name}")
 
 
@@ -70,9 +70,23 @@ def check_sources(root=ROOT):
     control_include = re.search(r'#\[path\s*=\s*"([^"]+)"\]\s*mod\s+ios_voice\s*;', harness)
     if not control_include or (root / "tests" / control_include[1]).resolve() != (root / "src/client/ios_voice.rs").resolve():
         raise ValueError("Voice harness must include the production cancellation controls")
+    credit_include = re.search(r'#\[path\s*=\s*"([^"]+)"\]\s*mod\s+ios_audio_credit\s*;', harness)
+    if not credit_include or (root / "tests" / credit_include[1]).resolve() != (root / "src/client/ios_audio_credit.rs").resolve():
+        raise ValueError("Voice harness must include the production downlink frame credits")
+    if re.search(r"\bstruct\s+AudioFrameCredit\b", harness):
+        raise ValueError("Voice harness must not copy the downlink credit implementation")
+    credit_source = (root / "src/client/ios_audio_credit.rs").read_text(encoding="utf-8")
+    credit_compact = re.sub(r"\s+", "", credit_source)
+    if "constMAX_PENDING_AUDIO_FRAMES:usize=6;" not in credit_compact or "count<MAX_PENDING_AUDIO_FRAMES" not in credit_compact or "self.0.fetch_sub(1,Ordering::Release);" not in credit_compact:
+        raise ValueError("Encoded downlink credits must bound six frames and return on Drop")
     source = (root / "src/client/ios_voice.rs").read_text(encoding="utf-8")
-    if re.search(r"\b(?:CLIENT_SERVER|audio_service|unbounded_channel|recv_timeout)\b", source):
+    if re.search(r"\b(?:CLIENT_SERVER|audio_service|unbounded_channel)\b", source):
         raise ValueError("iOS voice must not depend on a server, unbounded PCM, or blocking async startup")
+    async_start = source[source.index("pub fn start("):source.index("#[cfg(test)]")]
+    if re.search(r"\b(?:recv_timeout|thread::sleep)\b", async_start):
+        raise ValueError("iOS voice must not depend on a server, unbounded PCM, or blocking async startup")
+    if 'if super::ios_duplex::is_quarantined() {' not in async_start:
+        raise ValueError("Quarantined native audio must reject another call before device startup")
     if re.search(r"Data::(?:Message|CloseVoiceCall)\b", source):
         raise ValueError("All microphone messages and failures must be scoped to their voice request token")
     for event in re.finditer(r"Data::IosVoice(?:Message|Failed)\(\s*([^,]+),", source):
@@ -87,6 +101,24 @@ def check_sources(root=ROOT):
         raise ValueError("Microphone callback must only copy into its bounded PCM queue")
     if "capture_queue.push(block)" not in body or "copy_from_slice(chunk)" not in body:
         raise ValueError("Microphone callback must copy PCM through the bounded queue")
+    if "cpal::" in source or "build_input_stream" in source:
+        raise ValueError("iOS call capture must use the shared VoiceProcessingIO, not a separate RemoteIO")
+    binding = method_body(source, "bind_playback")
+    guard_at = binding.find("letbinding=PlaybackBinding{")
+    bind_at = binding.find("sender.send(MediaData::IosVoicePlaybackBind{")
+    if not (0 <= guard_at < bind_at) or "acknowledged.recv_timeout(POLL_INTERVAL)" not in binding or "started.elapsed()>=PLAYBACK_BIND_TIMEOUT" not in binding:
+        raise ValueError("Playback binding must guard before enqueue and wait for a bounded decoder acknowledgement on its worker")
+    record = method_body(source, "record")
+    bound_at = record.find("letmutbinding=bind_playback(")
+    capture_at = record.find("letstarting=Duplex::start(")
+    if not (0 <= bound_at < capture_at) or "binding.restore=false;" not in record[bound_at:capture_at]:
+        raise ValueError("VoiceProcessingIO cannot start before exclusive playback binding or restore on uncertain startup")
+    if "VoicePacketizer::new(VOICE_SAMPLE_RATE,1)" not in record or "playback.is_failed()" not in record or "playback.is_cancelled()" not in record:
+        raise ValueError("Duplex capture must use fixed mono 48k PCM and observe native route failure/cancellation")
+    if "letcleanup=stream.stop();binding.restore=cleanup.is_ok()&&playback.is_native_released()&&super::ios_duplex::playback_can_restore();drop(stream);" not in record:
+        raise ValueError("Normal audio playback cannot restore before confirmed native duplex teardown")
+    if 'ifself.restore{let_=self.sender.send(MediaData::IosVoicePlaybackEnd{epoch:self.epoch});}' not in re.sub(r"\s+", "", source):
+        raise ValueError("An uncertain native teardown must quarantine playback instead of sending End")
     format_match = re.search(r"queue_voice_message\(\s*sender,\s*request_timestamp,\s*audio_format_message\(\)", source)
     format_send = format_match.start() if format_match else -1
     encode = source.find(".encode_float(frame, &mut output)")
@@ -130,6 +162,20 @@ def check_sources(root=ROOT):
     if "arm_owner(Arc::as_ptr(&self.sender)asusize)" not in request or "Data::IosNewVoiceCall(epoch)" not in request:
         raise ValueError("iOS voice UI must arm an owner epoch before queuing its request")
     io_loop = (root / "src/client/io_loop.rs").read_text(encoding="utf-8")
+    # The non-iOS microphone forwarding code has an identically named arm.
+    # Scope this contract to actual inbound peer handling, not that recorder.
+    peer_handler = io_loop[io_loop.index("async fn handle_msg_from_peer("):]
+    downlink = event_body(peer_handler, "Some(message::Union::AudioFrame(frame)) => {")
+    if 'if!self.handler.lc.read().unwrap().disable_audio.v{#[cfg(target_os="ios")]ifletSome(credit)=super::ios_audio_credit::AudioFrameCredit::reserve(&self.ios_audio_pending){let_=self.audio_sender.send(MediaData::IosAudioFrame{frame:Box::new(frame),credit,});}#[cfg(not(target_os="ios"))]self.audio_sender.send(MediaData::AudioFrame(Box::new(frame))).ok();}' != downlink:
+        raise ValueError("iOS downlink must reserve credit before enqueue and preserve the non-iOS frame path")
+    client = (root / "src/client.rs").read_text(encoding="utf-8")
+    decoded = event_body(client, "MediaData::IosAudioFrame { frame, credit: _credit } => {")
+    if decoded != "audio_handler.handle_frame(*frame);":
+        raise ValueError("Decoder must retain the downlink credit through handle_frame completion")
+    ordinary_audio = method_body(client[client.index('#[cfg(not(target_os = "linux"))]\n    fn start_audio'):], "start_audio")
+    guard = '#[cfg(target_os="ios")]if!ios_duplex::playback_can_restore(){bail!("iOSordinaryaudioisunavailablewhilevoicedeviceownershipisunresolved");}'
+    if guard not in ordinary_audio or ordinary_audio.index(guard) > ordinary_audio.index("letdevice=AUDIO_HOST"):
+        raise ValueError("Ordinary playback must not bypass unresolved VoiceProcessingIO ownership")
     current = method_body(io_loop, "ios_voice_event_is_current")
     if not all(part in current for part in (
         "self.ios_voice_timestamp==Some(timestamp)&&self.ios_voice_epoch.map_or(false,|epoch|{",
@@ -142,10 +188,10 @@ def check_sources(root=ROOT):
     if not success.startswith("if!self.ios_voice_event_is_current(timestamp){let_=stopper.send(());returntrue;}"):
         raise ValueError("A cancelled Ready success must stop its own recorder before attaching it")
     failure = event_body(ready, "Err(reason)=>{")
-    if not failure.startswith("self.stop_voice_call();self.handler.on_voice_call_closed(&reason);"):
+    if not failure.startswith("self.stop_voice_call();self.notify_voice_call_failed(&reason);"):
         raise ValueError("Ready errors must clear voice state without checking the exited worker's armed flag")
     failed = event_body(io_loop, "Data::IosVoiceFailed(timestamp, reason) => {")
-    if not failed.startswith("ifself.ios_voice_timestamp==Some(timestamp){self.stop_voice_call();self.handler.on_voice_call_closed(&reason);"):
+    if not failed.startswith("ifself.ios_voice_timestamp==Some(timestamp){self.stop_voice_call();self.notify_voice_call_failed(&reason);"):
         raise ValueError("Worker failure cleanup must match its timestamp, not the exited owner's armed flag")
     message = event_body(io_loop, "Data::IosVoiceMessage(timestamp, message, pending) => {")
     if message != "ifself.ios_voice_event_is_current(timestamp){allow_err!(peer.send(&message).await);}pending.fetch_sub(1,Ordering::Release);":
@@ -159,43 +205,79 @@ def check_sources(root=ROOT):
     )) or not stopped.endswith("had_voice_call"):
         raise ValueError("Stopping voice must report and clear pending, starting and active state once")
     closed = event_body(io_loop, "Data::CloseVoiceCall => {")
-    if "ifhad_voice_call{self.handler.on_voice_call_closed(\"Closedmanuallybythepeer\");}" not in closed or not closed.startswith("lethad_voice_call=self.stop_voice_call();"):
+    if "ifhad_voice_call{self.notify_voice_call_closed(\"Closedmanuallybythepeer\");}" not in closed or not closed.startswith("lethad_voice_call=self.stop_voice_call();"):
         raise ValueError("An idle queued close must not re-notify Dart; protocol close must still be sent")
-    ack = 'ifhad_voice_call{self.handler.on_voice_call_closed("Closedmanuallybythepeer");}#[cfg(target_os="ios")]self.handler.on_voice_call_close_ack();allow_err!(peer.send(&msg).await);'
+    ack = 'ifhad_voice_call{self.notify_voice_call_closed("Closedmanuallybythepeer");}#[cfg(target_os="ios")]self.ios_voice_event("close_ack","");allow_err!(peer.send(&msg).await);'
     if ack not in closed:
         raise ValueError("iOS close ack must always follow local stop/optional closed and precede network await")
-    if '#[cfg(target_os = "ios")]\n    fn on_voice_call_close_ack(&self) {}' not in session:
-        raise ValueError("Close ack must have an iOS-only default UI interface method")
+    if '#[cfg(target_os = "ios")]\n    fn on_ios_voice_call_session_event(&self, _round: u32, _state: &str, _reason: &str) {}' not in session:
+        raise ValueError("Scoped voice events must have an iOS-only default UI interface method")
     flutter = (root / "src/flutter.rs").read_text(encoding="utf-8")
-    ack_event = method_body(flutter, "on_voice_call_close_ack")
-    if ack_event != 'self.push_event::<&str>("on_voice_call_close_ack",&[],&[]);':
-        raise ValueError("Close ack must use the same Flutter session stream as voice closed events")
+    scoped_event = method_body(flutter, "on_ios_voice_call_session_event")
+    if scoped_event != 'self.push_event("on_ios_voice_call_session_event",&[("round",round.to_string().as_str()),("state",state),("reason",reason)],&[],);':
+        raise ValueError("Scoped voice events must carry round/state/reason on the same Flutter session stream")
     remote_close = event_body(io_loop, "Some(message::Union::VoiceCallRequest(request)) => {")
-    if "ifself.stop_voice_call(){self.handler.on_voice_call_closed(\"\");}" not in remote_close:
+    if "ifself.stop_voice_call(){self.notify_voice_call_closed(\"\");}" not in remote_close:
         raise ValueError("An idle repeated remote close must not re-notify Dart")
     if "// The peer refused the voice call.\n                                self.stop_voice_call();" not in io_loop:
         raise ValueError("Refused requests must clear their owner epoch before notifying Dart")
     model = (root / "flutter/lib/models/model.dart").read_text(encoding="utf-8")
-    dispatch = event_body(model, "else if (name == 'on_voice_call_close_ack') {")
-    if dispatch != "parent.target?.chatModel.onVoiceCallCloseAck();":
-        raise ValueError("Flutter close ack dispatch must synchronously complete ChatModel's barrier")
+    dispatch = event_body(model, "else if (name == 'on_ios_voice_call_session_event') {")
+    if dispatch != "finalround=int.tryParse(evt['round']??'');if(round!=null){parent.target?.chatModel.onIosVoiceCallSessionEvent(round,evt['state']??'',evt['reason']??'');}":
+        raise ValueError("Flutter scoped event dispatch must validate the round before reaching ChatModel")
     chat = (root / "flutter/lib/models/chat_model.dart").read_text(encoding="utf-8")
-    close_call = event_body(chat, "Future<void> _closeIosVoiceCall() async {")
-    register_ack = close_call.find("_iosVoiceCloseAck=pending;")
-    enqueue_close = close_call.find("awaitbind.sessionCloseVoiceCall(sessionId:sessionId);")
-    await_ack = close_call.find("if(pending!=null&&!_voiceDisposed)awaitpending.future;")
-    if not (0 <= register_ack < enqueue_close < await_ack) or ".timeout(" in close_call:
-        raise ValueError("ChatModel must register its close barrier before FFI and await the real ack without a timeout")
-    if "closeCall:_closeIosVoiceCall," not in re.sub(r"\s+", "", chat):
-        raise ValueError("The iOS coordinator must await ChatModel's acknowledged close callback")
-    ack_handler = event_body(chat, "void onVoiceCallCloseAck() {")
-    if "_iosVoiceCloseAck=null;" not in ack_handler or "pending.complete();" not in ack_handler:
-        raise ValueError("ChatModel must release and clear the pending close barrier on its ack")
     coordinator = (root / "flutter/lib/utils/ios_voice_call.dart").read_text(encoding="utf-8")
-    request_call = event_body(coordinator, "Future<bool> request() async {")
+    chat_event = event_body(chat, "void onIosVoiceCallSessionEvent(int round, String state, String reason) {")
+    if "if(!_iosVoiceSession!.event(round,state,reason))return;" not in chat_event:
+        raise ValueError("ChatModel must reject stale voice rounds before changing UI state")
+    close_call = event_body(coordinator, "Future<void> _closeRound(int round) async {")
+    register_ack = close_call.find("_closeAck=pending;")
+    enqueue_close = close_call.find("awaitcloseCall();")
+    await_ack = close_call.find("if(!_disposed&&!_ended&&round==_round)awaitpending.future;")
+    if not (0 <= register_ack < enqueue_close < await_ack) or ".timeout(" in close_call:
+        raise ValueError("Session must register its close barrier before FFI and await the real ack without a timeout")
+    retire = event_body(coordinator, "void _retire() {")
+    if not retire.startswith("_acknowledgeClose();") or "call.disposeAsync(sendClose:false)" not in retire or "_retiring=retired;" not in retire:
+        raise ValueError("Terminal round must release its dead-loop ack and drain the retired coordinator")
+    session_request = event_body(coordinator, "Future<bool> request() async {")
+    if not session_request.startswith("if(_disposed||_ended||_retiring!=null)returnfalse;"):
+        raise ValueError("A new round must wait for retired FFI operations to drain")
+    scoped = method_body(io_loop, "ios_voice_event")
+    terminal = method_body(io_loop, "end_ios_voice_session")
+    if scoped != "ifletSome(round)=self.ios_voice_round{self.handler.on_ios_voice_call_session_event(round,state,reason);}":
+        raise ValueError("Every iOS voice event must carry its owning connection round")
+    if terminal != 'ifletSome(round)=self.ios_voice_round.take(){self.handler.on_ios_voice_call_session_event(round,"ended","");}':
+        raise ValueError("Terminal event must take its round exactly once")
+    for name, state in (("notify_voice_call_waiting", "waiting"), ("notify_voice_call_started", "connected"), ("notify_voice_call_closed", "closed")):
+        notify = method_body(io_loop, name)
+        argument = "reason" if state == "closed" else '""'
+        if f'#[cfg(target_os="ios")]self.ios_voice_event("{state}",{argument});' not in notify or '#[cfg(not(target_os="ios"))]self.handler.on_voice_call_' not in notify:
+            raise ValueError("Voice notifications must scope iOS while preserving non-iOS behavior")
+    disconnected = method_body(io_loop, "handle_disconnected")
+    if not disconnected.startswith('#[cfg(target_os="ios")]{self.stop_voice_call();self.end_ios_voice_session();}'):
+        raise ValueError("Disconnect must stop capture then emit the terminal round before other cleanup")
+    remote_drop = re.search(r"impl<T: InvokeUiSession> Drop for Remote<T>\s*\{(.*?)\n\}", io_loop, re.S)
+    if not remote_drop or "self.stop_voice_call();" not in remote_drop[1] or "self.end_ios_voice_session();" not in remote_drop[1]:
+        raise ValueError("Aborting a remote must stop capture and emit its terminal round")
+    session_loop = method_body(io_loop, "io_loop")
+    if 'if!self.handler.connection_round_state.lock().unwrap().is_round_gt(round){super::ios_voice::cancel_owner(Arc::as_ptr(&self.handler.sender)asusize);self.ios_voice_round=Some(round);self.ios_voice_event("started","");}' not in session_loop:
+        raise ValueError("A current reconnect must synchronously cancel old capture before its started event")
+    voice_request = method_body(io_loop, "send_voice_call_request")
+    muted = 'ifself.handler.lc.read().unwrap().disable_audio.v{super::ios_voice::cancel_owner(owner);self.stop_voice_call();self.ios_voice_event("failed","请先启用远程声音再发起语音。");return;}'
+    if muted not in voice_request or voice_request.index(muted) > voice_request.index("new_voice_call_request(true)"):
+        raise ValueError("Muted iOS downlink must fail closed before requesting or recording voice")
+    if "if(closed||streamGeneration!=_sessionStreamGeneration)return;" not in re.sub(r"\s+", "", model):
+        raise ValueError("A reused mobile FFI must ignore events from its previous UI stream")
+    ui_close = event_body(model, "Future<void> close({bool closeSession = true}) async {")
+    if not ui_close.startswith("chatModel.onRemoteSessionClosed();closed=true;"):
+        raise ValueError("Closing the UI must end voice before terminal stream events are ignored")
+    # The file also has IosVoiceCallSession.request; select the coordinator's
+    # request in its own class rather than matching the first same-named method.
+    coordinator_class = coordinator[coordinator.index("class IosVoiceCallCoordinator"):]
+    request_call = event_body(coordinator_class, "Future<bool> request() async {")
     if not request_call.startswith("if(_disposed||_requesting||_active||_stopping)returnfalse;"):
         raise ValueError("iOS redial must remain fenced throughout acknowledged closing")
-    stop = event_body(coordinator, "Future<void> stop({bool sendClose = true}) async {")
+    stop = event_body(coordinator_class, "Future<void> _stop({required bool sendClose}) async {")
     native_end = stop.find("if(key!=null)await_endNative(key);")
     await_close = stop.find("awaitclosing;")
     release_barrier = stop.find("_stopping=false;")

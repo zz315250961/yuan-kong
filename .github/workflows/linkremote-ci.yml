@@ -63,6 +63,10 @@ jobs:
         run: python -m unittest discover -s tests -p test_ios_voice_runner.py -v
       - name: Test production voice packetizer and cancellation controls
         run: python tests/run_ios_voice_tests.py
+      - name: Verify duplex callback source contracts
+        run: python -m unittest discover -s tests -p test_ios_duplex_runner.py -v
+      - name: Test production duplex queues, routing and device ownership
+        run: python tests/run_ios_duplex_tests.py
       - name: Verify HTTP-result cache production wiring
         run: python -m unittest discover -s tests -p test_http_status_runner.py -v
       - name: Test production namespaced HTTP-result consumption

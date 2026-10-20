@@ -95,6 +95,10 @@ pub mod io_loop;
 #[cfg(target_os = "ios")]
 pub(crate) mod ios_voice;
 #[cfg(target_os = "ios")]
+pub(crate) mod ios_duplex;
+#[cfg(target_os = "ios")]
+pub(crate) mod ios_audio_credit;
+#[cfg(target_os = "ios")]
 mod voice_packetizer;
 pub mod screenshot;
 
@@ -1219,6 +1223,10 @@ pub struct AudioHandler {
     device_channel: u16,
     #[cfg(not(target_os = "linux"))]
     ready: Arc<std::sync::Mutex<bool>>,
+    #[cfg(target_os = "ios")]
+    ios_voice_playback: ios_duplex::PlaybackRoute,
+    #[cfg(target_os = "ios")]
+    ios_last_audio_format: Option<AudioFormat>,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1376,6 +1384,16 @@ impl AudioHandler {
     /// Start the audio playback.
     #[cfg(not(target_os = "linux"))]
     fn start_audio(&mut self, format0: AudioFormat) -> ResultType<()> {
+        #[cfg(target_os = "ios")]
+        if self.ios_voice_playback.current().is_some() {
+            self.sample_rate = (format0.sample_rate, 48_000);
+            self.device_channel = 1;
+            return Ok(());
+        }
+        #[cfg(target_os = "ios")]
+        if !ios_duplex::playback_can_restore() {
+            bail!("iOS ordinary audio is unavailable while voice device ownership is unresolved");
+        }
         let device = AUDIO_HOST
             .default_output_device()
             .with_context(|| "Failed to get default output device")?;
@@ -1430,6 +1448,10 @@ impl AudioHandler {
             log::error!("Unsupported audio channel count: {}", f.channels);
             return;
         }
+        #[cfg(target_os = "ios")]
+        {
+            self.ios_last_audio_format = Some(f.clone());
+        }
         match AudioDecoder::new(f.sample_rate, if f.channels > 1 { Stereo } else { Mono }) {
             Ok(d) => {
                 let buffer = vec![0.; f.sample_rate as usize * f.channels as usize];
@@ -1446,8 +1468,14 @@ impl AudioHandler {
     /// Handle audio frame and play it.
     #[inline]
     pub fn handle_frame(&mut self, frame: AudioFrame) {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "ios")))]
         if self.audio_stream.is_none() || !self.ready.lock().unwrap().clone() {
+            return;
+        }
+        #[cfg(target_os = "ios")]
+        if self.ios_voice_playback.current().is_none()
+            && (self.audio_stream.is_none() || !*self.ready.lock().unwrap())
+        {
             return;
         }
         #[cfg(target_os = "linux")]
@@ -1459,6 +1487,20 @@ impl AudioHandler {
             if let Ok(n) = d.decode_float(&frame.data, buffer, false) {
                 let channels = self.channels;
                 let n = n * (channels as usize);
+                #[cfg(target_os = "ios")]
+                if let Some(playback) = self.ios_voice_playback.current() {
+                    // Decode off the real-time thread. The same call's output
+                    // is the far-end reference for its VoiceProcessingIO input.
+                    let mut pcm = buffer[..n].to_owned();
+                    if self.sample_rate.0 != 48_000 {
+                        pcm = crate::audio_resample(&pcm, self.sample_rate.0, 48_000, channels);
+                    }
+                    if channels != 1 {
+                        pcm = crate::audio_rechannel(pcm, 48_000, 48_000, channels, 1);
+                    }
+                    playback.push(&pcm);
+                    return;
+                }
                 #[cfg(not(target_os = "linux"))]
                 {
                     let sample_rate0 = self.sample_rate.0;
@@ -1491,6 +1533,42 @@ impl AudioHandler {
                 }
             }
         });
+    }
+
+    #[cfg(target_os = "ios")]
+    fn bind_ios_voice_playback(
+        &mut self,
+        epoch: u64,
+        playback: Arc<ios_duplex::Playback>,
+    ) -> bool {
+        if !self.ios_voice_playback.bind(epoch, playback) {
+            return false;
+        }
+        // This is the session's decoder thread, not an AudioUnit callback.
+        // Stop the ordinary output before acknowledging the duplex handoff.
+        self.audio_stream.take();
+        self.audio_buffer = AudioBuffer::default();
+        *self.ready.lock().unwrap() = false;
+        self.sample_rate.1 = 48_000;
+        self.device_channel = 1;
+        true
+    }
+
+    #[cfg(target_os = "ios")]
+    fn end_ios_voice_playback(&mut self, epoch: u64) {
+        if self.ios_voice_playback.end(epoch) {
+            // A stale worker's End cannot tear down a newer call. Discard
+            // voice PCM; resume only the saved format, never queued speech.
+            self.audio_buffer = AudioBuffer::default();
+            *self.ready.lock().unwrap() = false;
+            if !ios_duplex::playback_can_restore() {
+                log::warn!("iOS ordinary audio remains stopped: voice device cleanup is not confirmed");
+                return;
+            }
+            if let Some(format) = self.ios_last_audio_format.clone() {
+                allow_err!(self.start_audio(format));
+            }
+        }
     }
 
     /// Build audio output stream for current device.
@@ -2908,6 +2986,19 @@ pub enum MediaData {
     VideoFrame(Box<VideoFrame>),
     AudioFrame(Box<AudioFrame>),
     AudioFormat(AudioFormat),
+    #[cfg(target_os = "ios")]
+    IosVoicePlaybackBind {
+        epoch: u64,
+        playback: Arc<ios_duplex::Playback>,
+        ack: mpsc::Sender<bool>,
+    },
+    #[cfg(target_os = "ios")]
+    IosVoicePlaybackEnd { epoch: u64 },
+    #[cfg(target_os = "ios")]
+    IosAudioFrame {
+        frame: Box<AudioFrame>,
+        credit: ios_audio_credit::AudioFrameCredit,
+    },
     Reset,
     RecordScreen(bool),
 }
@@ -3083,9 +3174,24 @@ pub fn start_audio_thread() -> MediaSender {
                     MediaData::AudioFrame(af) => {
                         audio_handler.handle_frame(*af);
                     }
+                    #[cfg(target_os = "ios")]
+                    MediaData::IosAudioFrame { frame, credit: _credit } => {
+                        audio_handler.handle_frame(*frame);
+                    }
                     MediaData::AudioFormat(f) => {
                         log::debug!("recved audio format, sample rate={}", f.sample_rate);
                         audio_handler.handle_format(f);
+                    }
+                    #[cfg(target_os = "ios")]
+                    MediaData::IosVoicePlaybackBind { epoch, playback, ack } => {
+                        let accepted = audio_handler.bind_ios_voice_playback(epoch, playback);
+                        if ack.send(accepted).is_err() && accepted {
+                            audio_handler.end_ios_voice_playback(epoch);
+                        }
+                    }
+                    #[cfg(target_os = "ios")]
+                    MediaData::IosVoicePlaybackEnd { epoch } => {
+                        audio_handler.end_ios_voice_playback(epoch);
                     }
                     _ => {}
                 }

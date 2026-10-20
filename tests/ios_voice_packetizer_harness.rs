@@ -7,3 +7,6 @@ mod voice_packetizer;
 // stop-state code on host platforms, without copying it or stubbing CPAL.
 #[path = "../src/client/ios_voice.rs"]
 mod ios_voice;
+
+#[path = "../src/client/ios_audio_credit.rs"]
+mod ios_audio_credit;

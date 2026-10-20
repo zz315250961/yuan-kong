@@ -1094,6 +1094,15 @@ impl InvokeUiSession for FlutterHandler {
         self.push_event::<&str>("on_voice_call_close_ack", &[], &[]);
     }
 
+    #[cfg(target_os = "ios")]
+    fn on_ios_voice_call_session_event(&self, round: u32, state: &str, reason: &str) {
+        self.push_event(
+            "on_ios_voice_call_session_event",
+            &[("round", round.to_string().as_str()), ("state", state), ("reason", reason)],
+            &[],
+        );
+    }
+
     fn on_voice_call_waiting(&self) {
         self.push_event::<&str>("on_voice_call_waiting", &[], &[]);
     }
