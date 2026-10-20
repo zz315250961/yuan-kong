@@ -14,9 +14,12 @@ pub const PLAYBACK_SAMPLES: usize = SAMPLE_RATE as usize * 120 / 1_000;
 pub const MAX_CALLBACK_FRAMES: usize = 4_096;
 const DEVICE_ACTIVE: u8 = 1;
 const DEVICE_QUARANTINED: u8 = 2;
+const ORDINARY_PLAYBACK: u8 = 4;
 static DEVICE_STATE: AtomicU8 = AtomicU8::new(0);
 
-pub fn playback_can_restore() -> bool { DEVICE_STATE.load(Ordering::Acquire) == 0 }
+pub fn playback_can_restore() -> bool {
+    DEVICE_STATE.load(Ordering::Acquire) & (DEVICE_ACTIVE | DEVICE_QUARANTINED) == 0
+}
 
 pub fn is_quarantined() -> bool {
     DEVICE_STATE.load(Ordering::Acquire) & DEVICE_QUARANTINED != 0
@@ -32,6 +35,7 @@ impl<'a> DeviceLease<'a> {
         match state.compare_exchange(0, DEVICE_ACTIVE, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => Ok(Self { state, owned: true }),
             Err(value) if value & DEVICE_QUARANTINED != 0 => Err("iOS voice audio is quarantined after a device cleanup error; restart the app".to_owned()),
+            Err(value) if value >= ORDINARY_PLAYBACK => Err("iOS ordinary audio output is still active; retry after it stops".to_owned()),
             Err(_) => Err("Another iOS voice-processing device is still active".to_owned()),
         }
     }
@@ -54,6 +58,51 @@ impl Drop for DeviceLease<'_> {
         // later successful disposal may explicitly release that active bit.
         if self.state.load(Ordering::Acquire) & DEVICE_QUARANTINED == 0 { self.release(); }
     }
+}
+
+/// Ordinary outputs may coexist, but neither their configuration nor their
+/// live streams may overlap VoiceProcessingIO. The same atomic state closes
+/// the check-then-create race between an old decoder's End and a new call.
+pub struct OrdinaryPlaybackLease<'a> { state: &'a AtomicU8 }
+
+impl OrdinaryPlaybackLease<'static> {
+    pub fn acquire() -> Result<Self, String> { Self::claim(&DEVICE_STATE) }
+}
+
+impl<'a> OrdinaryPlaybackLease<'a> {
+    fn claim(state: &'a AtomicU8) -> Result<Self, String> {
+        state.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            if value & (DEVICE_ACTIVE | DEVICE_QUARANTINED) == 0 {
+                value.checked_add(ORDINARY_PLAYBACK)
+            } else { None }
+        }).map_err(|value| {
+            if value & DEVICE_QUARANTINED != 0 {
+                "iOS ordinary audio is quarantined after a cleanup error; restart the app".to_owned()
+            } else {
+                "iOS ordinary audio cannot start while voice IO is active or output capacity is exhausted".to_owned()
+            }
+        })?;
+        Ok(Self { state })
+    }
+}
+
+impl Drop for OrdinaryPlaybackLease<'_> {
+    fn drop(&mut self) { self.state.fetch_sub(ORDINARY_PLAYBACK, Ordering::Release); }
+}
+
+/// Rust drops fields in declaration order: the actual CPAL stream must finish
+/// disposal before another thread can acquire exclusive voice ownership.
+pub struct OrdinaryPlayback<'a, S> {
+    stream: S,
+    _lease: OrdinaryPlaybackLease<'a>,
+}
+
+impl<'a, S> OrdinaryPlayback<'a, S> {
+    pub fn new(stream: S, lease: OrdinaryPlaybackLease<'a>) -> Self {
+        Self { stream, _lease: lease }
+    }
+
+    pub fn stream(&self) -> &S { &self.stream }
 }
 
 /// A bounded, lock-free far-end reference. It is never shared between calls.
@@ -780,6 +829,127 @@ mod tests {
         let state = AtomicU8::new(0);
         { let _lease = DeviceLease::claim(&state).unwrap(); }
         assert!(DeviceLease::claim(&state).is_ok());
+    }
+
+    #[test]
+    fn ordinary_outputs_share_their_permits_but_exclude_native_voice() {
+        let state = AtomicU8::new(0);
+        let first = OrdinaryPlaybackLease::claim(&state).unwrap();
+        let second = OrdinaryPlaybackLease::claim(&state).unwrap();
+        assert_eq!(state.load(Ordering::Acquire), ORDINARY_PLAYBACK * 2);
+        assert!(DeviceLease::claim(&state).is_err());
+        drop(first);
+        assert!(DeviceLease::claim(&state).is_err());
+        drop(second);
+        assert!(DeviceLease::claim(&state).is_ok());
+    }
+
+    #[test]
+    fn native_voice_excludes_a_late_decoder_end_restoring_ordinary_output() {
+        let state = AtomicU8::new(0);
+        let mut old_voice = DeviceLease::claim(&state).unwrap();
+        old_voice.release();
+        let next_voice = DeviceLease::claim(&state).unwrap();
+        assert!(OrdinaryPlaybackLease::claim(&state).is_err());
+        drop(next_voice);
+        assert!(OrdinaryPlaybackLease::claim(&state).is_ok());
+    }
+
+    #[test]
+    fn old_decoder_end_restoration_excludes_voice_claim_after_another_bind_ack() {
+        let state = AtomicU8::new(0);
+        let mut old_voice = DeviceLease::claim(&state).unwrap();
+        old_voice.release();
+        // Different decoders have independent epoch routes. Its late End can
+        // restore output, but a new native unit must then fail before creation.
+        let old_output = OrdinaryPlaybackLease::claim(&state).unwrap();
+        assert!(DeviceLease::claim(&state).is_err());
+        drop(old_output);
+        assert!(DeviceLease::claim(&state).is_ok());
+    }
+
+    #[test]
+    fn failed_native_cleanup_blocks_ordinary_output_too() {
+        let state = AtomicU8::new(0);
+        let mut voice = DeviceLease::claim(&state).unwrap();
+        voice.quarantine();
+        voice.release();
+        assert!(OrdinaryPlaybackLease::claim(&state).is_err());
+        assert_eq!(state.load(Ordering::Acquire), DEVICE_QUARANTINED);
+    }
+
+    #[test]
+    fn failed_ordinary_setup_releases_its_permit_without_touching_other_streams() {
+        let state = AtomicU8::new(0);
+        let existing = OrdinaryPlaybackLease::claim(&state).unwrap();
+        { let _failed_setup = OrdinaryPlaybackLease::claim(&state).unwrap(); }
+        assert_eq!(state.load(Ordering::Acquire), ORDINARY_PLAYBACK);
+        assert!(DeviceLease::claim(&state).is_err());
+        drop(existing);
+        assert!(DeviceLease::claim(&state).is_ok());
+    }
+
+    #[test]
+    fn ordinary_permit_counter_saturation_cannot_wrap_to_unowned() {
+        let state = AtomicU8::new(0);
+        let mut outputs = Vec::new();
+        for _ in 0..(u8::MAX / ORDINARY_PLAYBACK) {
+            outputs.push(OrdinaryPlaybackLease::claim(&state).unwrap());
+        }
+        assert!(OrdinaryPlaybackLease::claim(&state).is_err());
+        assert!(DeviceLease::claim(&state).is_err());
+        drop(outputs);
+        assert_eq!(state.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn real_stream_owner_drops_stream_before_releasing_its_ordinary_permit() {
+        struct StreamDrop<'a> { state: &'a AtomicU8, dropped: &'a AtomicBool }
+        impl Drop for StreamDrop<'_> {
+            fn drop(&mut self) {
+                assert!(DeviceLease::claim(self.state).is_err());
+                self.dropped.store(true, Ordering::Release);
+            }
+        }
+        let state = AtomicU8::new(0);
+        let dropped = AtomicBool::new(false);
+        let output = OrdinaryPlayback::new(
+            StreamDrop { state: &state, dropped: &dropped },
+            OrdinaryPlaybackLease::claim(&state).unwrap(),
+        );
+        drop(output);
+        assert!(dropped.load(Ordering::Acquire));
+        assert!(DeviceLease::claim(&state).is_ok());
+    }
+
+    #[test]
+    fn simultaneous_voice_and_ordinary_claims_never_overlap() {
+        use std::sync::{atomic::AtomicUsize, Barrier};
+        let state = Arc::new(AtomicU8::new(0));
+        let ordinary = Arc::new(AtomicUsize::new(0));
+        let voice = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(33));
+        let mut workers = Vec::new();
+        for index in 0..32 {
+            let (state, ordinary, voice, barrier) =
+                (state.clone(), ordinary.clone(), voice.clone(), barrier.clone());
+            workers.push(std::thread::spawn(move || {
+                let native = if index % 2 == 0 { DeviceLease::claim(&state).ok() } else { None };
+                let output = if index % 2 == 1 { OrdinaryPlaybackLease::claim(&state).ok() } else { None };
+                if native.is_some() { voice.fetch_add(1, Ordering::AcqRel); }
+                if output.is_some() { ordinary.fetch_add(1, Ordering::AcqRel); }
+                barrier.wait();
+                drop(output); drop(native);
+            }));
+        }
+        barrier.wait();
+        for worker in workers { worker.join().unwrap(); }
+        let voices = voice.load(Ordering::Acquire);
+        let outputs = ordinary.load(Ordering::Acquire);
+        assert!(voices <= 1);
+        assert!(voices == 0 || outputs == 0);
+        assert!(voices > 0 || outputs > 0);
+        assert_eq!(state.load(Ordering::Acquire), 0);
     }
 
     #[cfg(not(target_os = "ios"))]

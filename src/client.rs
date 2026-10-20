@@ -1229,6 +1229,12 @@ pub struct AudioHandler {
     ios_last_audio_format: Option<AudioFormat>,
 }
 
+#[cfg(target_os = "ios")]
+impl StreamTrait for ios_duplex::OrdinaryPlayback<'static, Box<dyn StreamTrait>> {
+    fn play(&self) -> std::result::Result<(), cpal::PlayStreamError> { self.stream().play() }
+    fn pause(&self) -> std::result::Result<(), cpal::PauseStreamError> { self.stream().pause() }
+}
+
 #[cfg(not(target_os = "linux"))]
 struct AudioBuffer(
     pub Arc<std::sync::Mutex<ringbuf::HeapRb<f32>>>,
@@ -1394,6 +1400,9 @@ impl AudioHandler {
         if !ios_duplex::playback_can_restore() {
             bail!("iOS ordinary audio is unavailable while voice device ownership is unresolved");
         }
+        #[cfg(target_os = "ios")]
+        let ordinary_permit = ios_duplex::OrdinaryPlaybackLease::acquire()
+            .map_err(|error| anyhow!(error))?;
         let device = AUDIO_HOST
             .default_output_device()
             .with_context(|| "Failed to get default output device")?;
@@ -1437,6 +1446,13 @@ impl AudioHandler {
             }
         } else {
             build_output_stream(config)?;
+        }
+
+        #[cfg(target_os = "ios")]
+        {
+            let stream = self.audio_stream.take()
+                .ok_or_else(|| anyhow!("iOS audio output produced no stream"))?;
+            self.audio_stream = Some(Box::new(ios_duplex::OrdinaryPlayback::new(stream, ordinary_permit)));
         }
 
         Ok(())

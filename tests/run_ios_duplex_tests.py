@@ -81,6 +81,17 @@ def check_sources(root=ROOT):
         raise ValueError("Microphone callback errors must discard temporary captured PCM")
     if "self.latest = self.latest.max(epoch);" not in body(source, "end"):
         raise ValueError("End-before-Bind must retain an epoch tombstone")
+    ordinary_impl = source.find("impl<'a> OrdinaryPlaybackLease<'a>")
+    if ordinary_impl < 0 or ".fetch_update(" not in body(source[ordinary_impl:], "claim"):
+        raise ValueError("Ordinary output must atomically claim the same device state as exclusive voice IO")
+    if not re.search(r"pub struct OrdinaryPlayback<'a, S>\s*\{\s*stream: S,\s*_lease: OrdinaryPlaybackLease<'a>,\s*\}", source):
+        raise ValueError("Ordinary stream lifetime must retain its permit until after stream Drop")
+    client = (root / "src/client.rs").read_text(encoding="utf-8")
+    ordinary_start = body(client[client.index('#[cfg(not(target_os = "linux"))]\n    fn start_audio'):], "start_audio")
+    reserve = ordinary_start.find("ios_duplex::OrdinaryPlaybackLease::acquire()")
+    configuration = ordinary_start.find("let device = AUDIO_HOST")
+    if not (0 <= reserve < configuration) or "ios_duplex::OrdinaryPlayback::new(stream, ordinary_permit)" not in ordinary_start:
+        raise ValueError("Ordinary output must reserve before CPAL configuration and transfer the permit with its real stream")
 
 
 def manifest(root=ROOT):
