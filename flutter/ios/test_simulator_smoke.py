@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from simulator_smoke import choose_devices, main, simctl, smoke_device
+from simulator_smoke import _DIAGNOSTICS, choose_devices, main, simctl, smoke_device
 
 
 def device(name, available=True):
@@ -133,6 +133,55 @@ class SimulatorSequenceTests(unittest.TestCase):
                 self.assertFalse(result["passed"])
                 self.assertEqual(result["failed_stage"], "verify original process and application log")
 
+    def test_default_does_not_create_collector_or_extra_images(self):
+        with patch("simulator_smoke.SimulatorDiagnostics") as collector:
+            result = self.run_smoke()
+        collector.assert_not_called()
+        self.assertNotIn("diagnostic_screenshots", result)
+        self.assertEqual(len(result["screenshots"]), 4)
+
+    def test_opt_in_adds_separate_light_evidence_without_changing_original_sequence(self):
+        collector = Mock()
+        collector.begin_resume.side_effect = lambda: self.events.append(("diagnostic-resume-start",))
+        collector.end_resume.side_effect = lambda: self.events.append(("diagnostic-resume-end",))
+        token = _DIAGNOSTICS.set(collector)
+        try:
+            result = self.run_smoke()
+        finally:
+            _DIAGNOSTICS.reset(token)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["diagnostic_screenshots"],
+                         ["iphone-diagnostic-light-1.png", "iphone-diagnostic-light-2.png"])
+        self.assertEqual(len(result["screenshots"]), 4)
+        collector.begin_resume.assert_called_once_with()
+        collector.end_resume.assert_called_once_with()
+        collector.stop_device.assert_called_once_with()
+        dark = self.events.index(("screenshot", "iphone-home-dark.png"))
+        safari = self.events.index(("launch", "test-udid", "com.apple.mobilesafari"), dark)
+        resume = self.events.index(("launch", "test-udid", "top.zperme.linkremote"), safari)
+        start = self.events.index(("diagnostic-resume-start",))
+        end = self.events.index(("diagnostic-resume-end",))
+        self.assertGreater(start, safari)
+        self.assertEqual(start + 1, resume)
+        self.assertEqual(resume + 1, end)
+        boot = self.events.index(("bootstatus", "test-udid", "-b"))
+        self.assertLess(boot, self.events.index(("install", "test-udid", str(self.output / "Runner.app"))))
+
+    def test_collector_failure_cannot_overwrite_primary_frame_failure(self):
+        collector = Mock()
+        collector.start_device.side_effect = OSError("diagnostics unavailable")
+        collector.failure.side_effect = RuntimeError("sampling unavailable")
+        token = _DIAGNOSTICS.set(collector)
+        try:
+            result = self.run_smoke(fail_frame=True)
+        finally:
+            _DIAGNOSTICS.reset(token)
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["error"], "first frame failed")
+        self.assertEqual(result["failed_stage"], "launch and wait for first Flutter frame")
+        self.assertEqual(collector.error.call_count, 2)
+        collector.stop_device.assert_called_once_with()
+
 
 class SimulatorTimeoutDiagnosticsTests(unittest.TestCase):
     def test_timeout_preserves_the_real_bootstatus_output(self):
@@ -142,8 +191,60 @@ class SimulatorTimeoutDiagnosticsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Waiting on Data Migration"):
                 simctl("bootstatus", "test-udid", "-b", timeout=180)
 
+    def test_actual_command_timeout_and_nonzero_exit_are_recorded_not_hidden(self):
+        collector = Mock()
+        token = _DIAGNOSTICS.set(collector)
+        try:
+            with patch("simulator_smoke.subprocess.run", side_effect=subprocess.TimeoutExpired("simctl", 120)):
+                with self.assertRaisesRegex(RuntimeError, "timed out after 120s"):
+                    simctl("launch", "owned-udid", "top.zperme.linkremote")
+            self.assertEqual(collector.command_finished.call_args.args[-1], "timeout")
+            with patch("simulator_smoke.subprocess.run", return_value=Mock(returncode=7, stdout="failed")):
+                with self.assertRaisesRegex(RuntimeError, "failed"):
+                    simctl("ui", "owned-udid", "appearance", "light")
+            self.assertEqual(collector.command_finished.call_args.args[-1], 7)
+        finally:
+            _DIAGNOSTICS.reset(token)
+
 
 class SimulatorCLITests(unittest.TestCase):
+    def test_opt_in_cli_wires_collector_and_reports_errors_separately(self):
+        inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+            device("iPhone 16 Pro"), device("iPad Pro 11-inch (M4)")]}}
+        collector = Mock(errors=[{"action": "probe", "error": "unavailable"}])
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            with patch("sys.argv", ["simulator_smoke.py", "--app", "Runner.app", "--output",
+                                     str(output), "--family", "ipad", "--diagnostics"]), \
+                    patch("simulator_smoke.SimulatorDiagnostics", return_value=collector), \
+                    patch("simulator_smoke.subprocess.check_output", return_value="18.5\n"), \
+                    patch("simulator_smoke.simctl", return_value=json.dumps(inventory)), \
+                    patch("simulator_smoke.smoke_device", return_value={"passed": True}) as smoke, \
+                    patch("builtins.print"):
+                main()
+            self.assertTrue(smoke.call_args.args[0]["name"].startswith("iPad"))
+            report = json.loads((output / "report.json").read_text())
+            self.assertEqual(report["diagnostics"]["errors"], collector.errors)
+            self.assertTrue(report["devices"][0]["passed"])
+        collector.close.assert_called_once_with()
+        self.assertIsNone(_DIAGNOSTICS.get())
+
+    def test_diagnostic_setup_failure_does_not_fail_the_smoke(self):
+        inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+            device("iPhone 16 Pro"), device("iPad Pro 11-inch (M4)")]}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            with patch("sys.argv", ["simulator_smoke.py", "--app", "Runner.app", "--output",
+                                     str(output), "--diagnostics"]), \
+                    patch("simulator_smoke.SimulatorDiagnostics", side_effect=OSError("disk full")), \
+                    patch("simulator_smoke.subprocess.check_output", return_value="18.5\n"), \
+                    patch("simulator_smoke.simctl", return_value=json.dumps(inventory)), \
+                    patch("simulator_smoke.smoke_device", return_value={"passed": True}), \
+                    patch("builtins.print"):
+                main()
+            report = json.loads((output / "report.json").read_text())
+            self.assertEqual(report["diagnostics"], {"enabled": False, "errors": ["disk full"]})
+
     def test_family_option_runs_only_the_requested_device(self):
         inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
             device("iPhone 16 Pro"), device("iPad Pro 11-inch (M4)")]}}

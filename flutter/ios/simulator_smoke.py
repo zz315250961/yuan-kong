@@ -7,6 +7,7 @@ Run after ./flutter/build_ios.sh --simulator on an Intel Mac.
 """
 
 import argparse
+import contextvars
 import json
 import re
 import subprocess
@@ -14,13 +15,29 @@ import time
 import uuid
 from pathlib import Path
 
+from simulator_diagnostics import SimulatorDiagnostics
+
 
 BUNDLE = "top.zperme.linkremote"
 FRAME_MARKER = "LINKREMOTE_SMOKE_FIRST_FRAME"
+_DIAGNOSTICS = contextvars.ContextVar("ios_smoke_diagnostics", default=None)
+
+
+def observe(method, *arguments):
+    """Diagnostic failures never replace or turn green a smoke result."""
+    collector = _DIAGNOSTICS.get()
+    if collector is None:
+        return None
+    try:
+        return getattr(collector, method)(*arguments)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        collector.error(method, error)
+        return None
 
 
 def simctl(*arguments, timeout=120, check=True):
     started = time.monotonic()
+    identifier = observe("command_started", arguments, timeout)
     try:
         result = subprocess.run(["xcrun", "simctl", *arguments], text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
@@ -29,9 +46,14 @@ def simctl(*arguments, timeout=120, check=True):
         if isinstance(captured, bytes):
             captured = captured.decode("utf-8", errors="replace")
         elapsed = time.monotonic() - started
+        observe("command_finished", identifier, elapsed, None, "timeout")
         raise RuntimeError("simctl " + " ".join(arguments) +
                            f" timed out after {timeout}s (elapsed {elapsed:.1f}s); "
                            "captured output tail:\n" + captured[-8000:]) from error
+    except OSError as error:
+        observe("command_finished", identifier, time.monotonic() - started, None, str(error))
+        raise
+    observe("command_finished", identifier, time.monotonic() - started, result.returncode)
     if check and result.returncode:
         raise RuntimeError("simctl " + " ".join(arguments) + ": " + result.stdout)
     return result.stdout
@@ -119,11 +141,13 @@ def smoke_device(device, app, output):
             print(f"[ios-smoke] {device['name']}: cleanup warning: {message}", flush=True)
 
     try:
+        observe("start_device", udid, family)
         stage("boot selected simulator")
         if not was_booted:
             simctl("boot", udid)
         stage("wait for runtime boot completion")
         simctl("bootstatus", udid, "-b", timeout=180)
+        observe("start_logs")
         stage("set initial light appearance")
         simctl("ui", udid, "appearance", "light")
         # Safari's first cold launch can take longer than a Flutter Debug app's
@@ -158,6 +182,7 @@ def smoke_device(device, app, output):
             stage("launch and wait for first Flutter frame")
             launched = simctl("launch", "--terminate-running-process", udid, BUNDLE)
             result["launch"] = launched.strip()
+            observe("launched", launched)
             wait_for_frame(log_path, log_process)
             result["first_flutter_frame"] = True
             time.sleep(2)
@@ -173,13 +198,26 @@ def smoke_device(device, app, output):
                     simctl("ui", udid, "appearance", "light")
                     result["background_launch"] = simctl("launch", udid, "com.apple.mobilesafari").strip()
                     time.sleep(1)
+                    observe("begin_resume")
                     result["resume_launch"] = simctl("launch", udid, BUNDLE).strip()
+                    observe("end_resume")
                 elif state == "home-dark":
                     simctl("ui", udid, "appearance", "dark")
                 time.sleep(2)
                 target = output / (family + "-" + state + ".png")
                 screenshot(udid, target)
                 result["screenshots"].append(target.name)
+                if state == "home-light" and _DIAGNOSTICS.get() is not None:
+                    # Extra raw images are diagnostic evidence only, never a
+                    # visual-pass assertion or a replacement for the original.
+                    for index in (1, 2):
+                        time.sleep(2)
+                        extra = output / (family + f"-diagnostic-light-{index}.png")
+                        try:
+                            screenshot(udid, extra)
+                            result.setdefault("diagnostic_screenshots", []).append(extra.name)
+                        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                            observe("error", "extra light screenshot", error)
             stage("verify original process and application log")
             pid = re.search(r":\s*(\d+)\s*$", launched)
             if pid is None:
@@ -204,8 +242,10 @@ def smoke_device(device, app, output):
             result["failure_screenshot"] = target.name
         except (RuntimeError, OSError, subprocess.SubprocessError) as capture_error:
             result["failure_screenshot_error"] = str(capture_error)
+        observe("failure")
     finally:
         finish_stage()
+        observe("stop_device")
         if log_process is not None:
             def stop_log():
                 log_process.terminate()
@@ -272,11 +312,22 @@ def main():
                         help="Run one family on a clean runner, or both sequentially")
     parser.add_argument("--fresh-devices", action="store_true",
                         help="Create and clean up only QA-owned devices of the same runtime and types")
+    parser.add_argument("--diagnostics", action="store_true",
+                        help="Collect bounded read-only OS/host evidence; does not change smoke gates")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output directory already exists; choose a new path to preserve prior evidence")
     args.output.mkdir(parents=True)
+    collector = None
+    token = None
+    diagnostic_setup_errors = []
     try:
+        if args.diagnostics:
+            try:
+                collector = SimulatorDiagnostics(args.output)
+                token = _DIAGNOSTICS.set(collector)
+            except OSError as error:
+                diagnostic_setup_errors.append(str(error))
         sdk_version = subprocess.check_output(
             ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
         inventory = json.loads(simctl("list", "devices", "available", "--json"))
@@ -297,12 +348,24 @@ def main():
                            "foreground-return screenshots for manual inspection before requesting a URL. "
                            "URL delivery is not verified; system confirmation requires manual verification. "
                            "Does not validate live remote input, camera, cellular or device performance."}
+        if collector is not None:
+            report["diagnostics"] = {"enabled": True, "directory": "diagnostics",
+                                     "errors": collector.errors,
+                                     "final_errors_file": "diagnostics/errors.json",
+                                     "visual_verdict": "manual inspection required"}
+        elif diagnostic_setup_errors:
+            report["diagnostics"] = {"enabled": False, "errors": diagnostic_setup_errors}
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report, indent=2))
         if not all(result["passed"] for result in results):
             parser.exit(1, "iOS Simulator smoke failed; inspect report, logs and native screenshots.\n")
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
         parser.exit(1, f"iOS Simulator smoke failed: {error}\n")
+    finally:
+        if collector is not None:
+            observe("close")
+        if token is not None:
+            _DIAGNOSTICS.reset(token)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,8 @@ gh workflow run linkremote-ios-verify.yml --repo zz315250961/yuan-kong \
 
 只检查设备或模拟器时分别改为 `-f build_target=device` 或 `-f build_target=simulator`，`--ref` 选实际待验收的分支。该工作流构建与检查产物，不部署生产服务或发布签名 IPA。
 
+重放可选 `replay_family=ipad` 或 `iphone`，默认仍为 `both`、各用独立 runner。`simulator_diagnostics=true` 默认关闭，仅重放模式启用只读诊断：命令起止/退出码、窄范围系统日志、宿主资源，以及真正返回 App 的命令等待 25 秒后对原 PID 的有界采样。额外两张浅色原图用于人工比较，不以像素阈值判通过；失败先保留原图，采集错误单独记录在 `diagnostics/errors.json`，不覆盖 App 主失败。55 项脚本/fixture 回归只验证接线、超时与清理，不证明已在 Mac 采得有效栈、UI 正确或音频已验收。
+
 ## 无开发者账号的模拟器验证
 
 CI 显式使用 `macos-15-intel` 与已安装的 Xcode 16.4（iOS 18.5 SDK），避免默认 `macos-15` 标签切换 CPU 后把 x86_64 Simulator 静态库与 arm64 设备库混用。Rust 目标为 `x86_64-apple-ios`，vcpkg 使用固定基线已有的 `x64-ios` triplet（它的工具链选择 `iphonesimulator` SDK）。Runner 的链接目录由 `Flutter/NativeCore.xcconfig` 按 SDK 选择。设备构建继续使用 `aarch64-apple-ios`，两者的 `.a` 文件分别存放。

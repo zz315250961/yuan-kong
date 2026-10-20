@@ -30,6 +30,15 @@ on:
         description: UI replay only - create QA-owned data containers of the same device types
         type: boolean
         default: false
+      replay_family:
+        description: UI replay only - select one family or both on separate clean runners
+        type: choice
+        options: [both, iphone, ipad]
+        default: both
+      simulator_diagnostics:
+        description: UI replay only - bounded read-only OS/host diagnostics, without changing App gates
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        family: [iphone, ipad]
+        family: ${{ fromJSON(inputs.replay_family == 'iphone' && '["iphone"]' || inputs.replay_family == 'ipad' && '["ipad"]' || '["iphone","ipad"]') }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
       REPLAY_EVIDENCE: flutter/build/ios/simulator-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}
@@ -64,6 +73,8 @@ jobs:
           xcrun simctl list devices booted
           xcrun simctl help bootstatus
           python3 -m unittest discover -s flutter/ios -p 'test_simulator_smoke.py' -v
+          python3 -m unittest discover -s flutter/ios -p 'test_simulator_diagnostics.py' -v
+          python3 -m unittest discover -s flutter/ios -p 'test_simulator_replay_workflow.py' -v
           python3 -m unittest discover -s flutter/ios -p 'test_verify_simulator_replay.py' -v
 
       - name: Download the exact historical Simulator App artifact
@@ -101,10 +112,14 @@ jobs:
         env:
           DEVICE_FAMILY: ${{ matrix.family }}
           FRESH_DEVICES: ${{ inputs.simulator_fresh_devices }}
+          DIAGNOSTICS: ${{ inputs.simulator_diagnostics }}
         run: |
           fresh_options=()
           if [[ "$FRESH_DEVICES" == true ]]; then
             fresh_options+=(--fresh-devices)
+          fi
+          if [[ "$DIAGNOSTICS" == true ]]; then
+            fresh_options+=(--diagnostics)
           fi
           python3 flutter/ios/simulator_smoke.py \
             --app simulator-replay-app/Runner.app \
