@@ -174,6 +174,11 @@ def check_sources(root=ROOT):
     decoded = event_body(client, "MediaData::IosAudioFrame { frame, credit: _credit } => {")
     if decoded != "audio_handler.handle_frame(*frame);":
         raise ValueError("Decoder must retain the downlink credit through handle_frame completion")
+    audio_format = method_body(client, "handle_format")
+    valid_format = event_body(audio_format, "Ok(d)=>{")
+    remembered_format = "self.ios_last_audio_format=Some(f.clone());"
+    if audio_format.count(remembered_format) != 1 or valid_format.count(remembered_format) != 1:
+        raise ValueError("iOS playback restore format must be saved only after AudioDecoder validates it")
     ordinary_audio = method_body(client[client.index('#[cfg(not(target_os = "linux"))]\n    fn start_audio'):], "start_audio")
     guard = '#[cfg(target_os="ios")]if!ios_duplex::playback_can_restore(){bail!("iOSordinaryaudioisunavailablewhilevoicedeviceownershipisunresolved");}'
     if guard not in ordinary_audio or ordinary_audio.index(guard) > ordinary_audio.index("letdevice=AUDIO_HOST"):

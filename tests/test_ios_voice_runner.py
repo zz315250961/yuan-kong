@@ -358,6 +358,17 @@ class VoiceSourceContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "retain the downlink credit"):
             check_sources(self.root)
 
+    def test_invalid_format_cannot_replace_last_known_good_restore_format(self):
+        self.replace("src/client.rs", "self.ios_last_audio_format = Some(f.clone());", "// not yet validated")
+        self.replace("src/client.rs", "match AudioDecoder::new(f.sample_rate,", "self.ios_last_audio_format = Some(f.clone());\n        match AudioDecoder::new(f.sample_rate,")
+        with self.assertRaisesRegex(ValueError, "saved only after AudioDecoder validates"):
+            check_sources(self.root)
+
+    def test_valid_format_must_remain_available_for_playback_restoration(self):
+        self.replace("src/client.rs", "self.ios_last_audio_format = Some(f.clone());", "// restore target omitted")
+        with self.assertRaisesRegex(ValueError, "saved only after AudioDecoder validates"):
+            check_sources(self.root)
+
     def test_new_audio_format_cannot_bypass_native_quarantine(self):
         self.replace("src/client.rs", "if !ios_duplex::playback_can_restore() {", "if false {")
         with self.assertRaisesRegex(ValueError, "unresolved VoiceProcessingIO ownership"):

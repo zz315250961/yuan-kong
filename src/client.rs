@@ -1448,12 +1448,12 @@ impl AudioHandler {
             log::error!("Unsupported audio channel count: {}", f.channels);
             return;
         }
-        #[cfg(target_os = "ios")]
-        {
-            self.ios_last_audio_format = Some(f.clone());
-        }
         match AudioDecoder::new(f.sample_rate, if f.channels > 1 { Stereo } else { Mono }) {
             Ok(d) => {
+                #[cfg(target_os = "ios")]
+                {
+                    self.ios_last_audio_format = Some(f.clone());
+                }
                 let buffer = vec![0.; f.sample_rate as usize * f.channels as usize];
                 self.audio_decoder = Some((d, buffer));
                 self.channels = f.channels as _;
