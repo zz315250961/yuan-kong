@@ -1,9 +1,11 @@
 import json
+import struct
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+import zlib
 
 from simulator_smoke import _DIAGNOSTICS, choose_devices, main, simctl, smoke_device
 
@@ -42,34 +44,160 @@ class SimulatorSequenceTests(unittest.TestCase):
         self.output = Path(self.directory.name)
         self.events = []
 
-    def run_smoke(self, fail_frame=False, fail_cleanup=False, fail_ready=None, log_text=""):
+    def run_smoke(self, fail_frame=False, fail_cleanup=False, fail_ready=None, log_text="",
+                  verify_images=False, capture_bytes=None, resume_pid=1234,
+                  fail_image=None, **options):
         def command(*arguments, **kwargs):
             self.events.append(arguments)
             if fail_ready and arguments[0] == fail_ready:
                 raise subprocess.TimeoutExpired("simctl " + fail_ready, kwargs.get("timeout", 120))
             if fail_cleanup and arguments[0] == "shutdown":
                 raise subprocess.TimeoutExpired("simctl shutdown", 120)
-            if arguments[0] == "launch" and arguments[-1] == "top.zperme.linkremote":
-                return "top.zperme.linkremote: 1234\n"
+            if arguments[0] == "launch" and "top.zperme.linkremote" in arguments:
+                pid = 1234 if "--terminate-running-process" in arguments else resume_pid
+                return f"top.zperme.linkremote: {pid}\n"
             if arguments[:3] == ("spawn", "test-udid", "launchctl"):
                 return "1234\t0\ttop.zperme.linkremote\n"
             return ""
 
         def capture(udid, target):
             self.events.append(("screenshot", target.name))
+            if capture_bytes is not None:
+                target.write_bytes(capture_bytes)
 
         def frame(log_path, process):
             if fail_frame:
                 raise RuntimeError("first frame failed")
             log_path.write_text(log_text, encoding="utf-8")
 
-        with patch("simulator_smoke.simctl", side_effect=command), \
+        def image_guard(path):
+            self.events.append(("image-check", path.name))
+            if path.name == fail_image:
+                raise RuntimeError("Known home-frame corruption: injected guard failure")
+            return {"known_corruption_detected": False, "scope": "mocked image guard"}
+
+        from contextlib import nullcontext
+        guard = (nullcontext() if verify_images else
+                 patch("simulator_smoke.check_home_screenshot", create=True,
+                       side_effect=image_guard))
+        with guard, patch("simulator_smoke.simctl", side_effect=command), \
                 patch("simulator_smoke.screenshot", side_effect=capture), \
                 patch("simulator_smoke.wait_for_frame", side_effect=frame), \
                 patch("simulator_smoke.subprocess.Popen", return_value=Mock()), \
                 patch("simulator_smoke.time.sleep"), patch("builtins.print"):
             return smoke_device({"name": "iPhone Test", "udid": "test-udid",
-                                 "state": "Shutdown"}, self.output / "Runner.app", self.output)
+                                 "state": "Shutdown"}, self.output / "Runner.app", self.output,
+                                **options)
+
+    def test_default_negative_image_gate_runs_on_every_app_checkpoint(self):
+        result = self.run_smoke()
+        self.assertTrue(result["passed"])
+        self.assertEqual([event[1] for event in self.events if event[0] == "image-check"],
+                         result["screenshots"])
+        self.assertEqual(len(result["image_checks"]), 4)
+        self.assertEqual(result["requested_renderer"], "default")
+        self.assertFalse(result["renderer_backend_verified"])
+        self.assertEqual(result["stress_cycles_completed"], 0)
+        self.assertFalse(any("--enable-impeller=false" in event for event in self.events))
+
+    def test_actual_smoke_loop_rejects_known_black_bar_surface_and_still_cleans_up(self):
+        def chunk(kind, payload):
+            return (struct.pack(">I", len(payload)) + kind + payload
+                    + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+        width, height = 180, 320
+        rows = [b"\x00" + b"".join(
+            (b"\x00\x00\x00\xff" if y >= 32 and (y // 8) % 2 == 0 and 30 <= x < 150
+             else b"\xff\xff\xff\xff") for x in range(width)) for y in range(height)]
+        data = (b"\x89PNG\r\n\x1a\n" + chunk(
+            b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(b"".join(rows))) + chunk(b"IEND", b""))
+        result = self.run_smoke(verify_images=True, capture_bytes=data)
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["failed_stage"], "home-light")
+        self.assertIn("Known home-frame corruption", result["error"])
+        self.assertFalse(any(event[0] == "openurl" for event in self.events))
+        self.assertIn(("shutdown", "test-udid"), self.events)
+
+    def test_actual_smoke_loop_rejects_original_damaged_capture_not_just_synthetic_pattern(self):
+        original = (Path(__file__).resolve().parents[2].parent / "artifacts" /
+                    "v1.0.44-candidate/ios-c0354c-39287264581/terminal-evidence-20261020/"
+                    "ui-evidence/ipad-home-light.png")
+        if not original.is_file():
+            self.skipTest("Original unmodified damaged screenshot is unavailable on this host")
+        result = self.run_smoke(verify_images=True, capture_bytes=original.read_bytes())
+        self.assertFalse(result["passed"])
+        self.assertIn("Known home-frame corruption", result["error"])
+
+    def test_unreadable_capture_cannot_pass_image_gate(self):
+        result = self.run_smoke(verify_images=True, capture_bytes=b"not a PNG")
+        self.assertFalse(result["passed"])
+        self.assertIn("Cannot inspect home screenshot", result["error"])
+
+    def test_no_finding_from_real_reader_stays_explicitly_not_visual_approval(self):
+        def chunk(kind, payload):
+            return (struct.pack(">I", len(payload)) + kind + payload
+                    + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+        white = (b"\x89PNG\r\n\x1a\n" + chunk(
+            b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+                 + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff\xff"))
+                 + chunk(b"IEND", b""))
+        result = self.run_smoke(verify_images=True, capture_bytes=white)
+        self.assertTrue(result["passed"])
+        self.assertEqual(len(result["image_checks"]), 4)
+        self.assertTrue(all("not visual approval" in item["scope"] for item in result["image_checks"]))
+
+    def test_skia_request_is_applied_to_initial_and_every_resume_without_claiming_backend(self):
+        result = self.run_smoke(renderer="skia", stress_cycles=2)
+        launches = [event for event in self.events
+                    if event[0] == "launch" and "top.zperme.linkremote" in event]
+        self.assertEqual(len(launches), 4)
+        self.assertTrue(all(event[-1] == "--enable-impeller=false" for event in launches))
+        self.assertEqual(result["requested_renderer"], "skia")
+        self.assertFalse(result["renderer_backend_verified"])
+
+    def test_stress_cycles_are_bounded_unique_and_all_complete_before_url_prompt(self):
+        result = self.run_smoke(stress_cycles=6)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["stress_cycles_completed"], 6)
+        self.assertEqual(len(result["screenshots"]), 22)
+        self.assertEqual(len(set(result["screenshots"])), 22)
+        self.assertIn("iphone-stress-06-resumed.png", result["screenshots"])
+        self.assertEqual(len(result["image_checks"]), 22)
+        open_index = next(index for index, event in enumerate(self.events) if event[0] == "openurl")
+        for name in result["screenshots"][:-1]:
+            self.assertLess(self.events.index(("screenshot", name)), open_index)
+
+    def test_invalid_stress_or_renderer_fails_before_any_simulator_command(self):
+        for options in ({"stress_cycles": -1}, {"stress_cycles": 7}, {"renderer": "metal"}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.run_smoke(**options)
+        self.assertEqual(self.events, [])
+
+    def test_stress_image_failure_stops_without_url_and_retains_completed_cycle_count(self):
+        result = self.run_smoke(stress_cycles=6, fail_image="iphone-stress-03-home-dark.png")
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["stress_cycles_completed"], 2)
+        self.assertEqual(result["failed_stage"], "stress-03-home-dark")
+        self.assertFalse(any(event[0] == "openurl" for event in self.events))
+        self.assertIn(("shutdown", "test-udid"), self.events)
+
+    def test_diagnostic_extra_image_guard_cannot_be_downgraded_to_optional_capture_error(self):
+        collector = Mock()
+        token = _DIAGNOSTICS.set(collector)
+        try:
+            result = self.run_smoke(fail_image="iphone-diagnostic-light-1.png")
+        finally:
+            _DIAGNOSTICS.reset(token)
+        self.assertFalse(result["passed"])
+        self.assertIn("Known home-frame corruption", result["error"])
+        self.assertFalse(any(event[0] == "openurl" for event in self.events))
+        collector.stop_device.assert_called_once_with()
+
+    def test_resume_pid_change_is_not_hidden_by_surviving_original_launchctl_row(self):
+        result = self.run_smoke(resume_pid=5678)
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["failed_stage"], "resumed")
+        self.assertIn("restarted", result["error"])
 
     def test_actual_smoke_loop_finishes_unobscured_ui_before_openurl(self):
         result = self.run_smoke()
@@ -208,6 +336,40 @@ class SimulatorTimeoutDiagnosticsTests(unittest.TestCase):
 
 
 class SimulatorCLITests(unittest.TestCase):
+    def test_renderer_stress_cli_wires_smoke_and_report_without_claiming_backend(self):
+        inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+            device("iPhone 16 Pro"), device("iPad Pro 11-inch (M4)")]}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ab-evidence"
+            with patch("sys.argv", ["simulator_smoke.py", "--app", "Runner.app", "--output",
+                                     str(output), "--family", "ipad", "--renderer", "skia",
+                                     "--stress-cycles", "6"]), \
+                    patch("simulator_smoke.subprocess.check_output", return_value="18.5\n"), \
+                    patch("simulator_smoke.simctl", return_value=json.dumps(inventory)), \
+                    patch("simulator_smoke.smoke_device", return_value={"passed": True}) as smoke, \
+                    patch("builtins.print"):
+                main()
+            self.assertEqual(smoke.call_args.kwargs, {"renderer": "skia", "stress_cycles": 6})
+            report = json.loads((output / "report.json").read_text())
+            self.assertEqual(report["requested_renderer"], "skia")
+            self.assertEqual(report["stress_cycles_requested"], 6)
+            self.assertFalse(report["renderer_backend_verified"])
+            self.assertIn("no finding is not visual approval", report["scope"])
+
+    def test_out_of_range_cli_rejected_before_creating_output_or_querying_simulators(self):
+        for arguments in (["--stress-cycles", "-1"], ["--stress-cycles", "7"],
+                          ["--renderer", "metal"]):
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "not-created"
+                with patch("sys.argv", ["simulator_smoke.py", "--app", "Runner.app", "--output",
+                                         str(output), *arguments]), \
+                        patch("simulator_smoke.simctl") as command, \
+                        patch("sys.stderr"), self.assertRaises(SystemExit) as failure:
+                    main()
+                self.assertEqual(failure.exception.code, 2)
+                command.assert_not_called()
+                self.assertFalse(output.exists())
+
     def test_opt_in_cli_wires_collector_and_reports_errors_separately(self):
         inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
             device("iPhone 16 Pro"), device("iPad Pro 11-inch (M4)")]}}

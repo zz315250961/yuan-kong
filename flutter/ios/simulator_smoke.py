@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from simulator_diagnostics import SimulatorDiagnostics
+from verify_simulator_image import ImageError, inspect_home_image, read_png
 
 
 BUNDLE = "top.zperme.linkremote"
@@ -96,12 +97,31 @@ def screenshot(udid, target):
             raise RuntimeError("Simulator did not produce a PNG screenshot")
 
 
-def smoke_device(device, app, output):
+def check_home_screenshot(target):
+    """A negative-only corruption gate; no finding never grants visual approval."""
+    try:
+        report = inspect_home_image(read_png(target))
+    except (ImageError, OSError) as error:
+        raise RuntimeError("Cannot inspect home screenshot: " + str(error)) from error
+    if report["known_corruption_detected"]:
+        raise RuntimeError("Known home-frame corruption: " + json.dumps(report, sort_keys=True))
+    return report
+
+
+def smoke_device(device, app, output, renderer="default", stress_cycles=0):
+    if renderer not in ("default", "skia"):
+        raise ValueError("renderer must be default or skia")
+    if type(stress_cycles) is not int or not 0 <= stress_cycles <= 6:
+        raise ValueError("stress_cycles must be an integer from 0 to 6")
+    engine_arguments = ("--enable-impeller=false",) if renderer == "skia" else ()
     udid = device["udid"]
     family = "iphone" if device["name"].startswith("iPhone") else "ipad"
     log_path = output / (family + ".log")
     result = {"model": device["name"], "udid": udid, "screenshots": [], "native_screenshots": [],
               "passed": False,
+              "requested_renderer": renderer, "renderer_backend_verified": False,
+              "stress_cycles_requested": stress_cycles, "stress_cycles_completed": 0,
+              "image_checks": [],
               "url_delivery_verified": False, "url_delivery_status": "not_attempted"}
     log_process = None
     was_booted = device["state"] == "Booted"
@@ -128,6 +148,14 @@ def smoke_device(device, app, output):
         target = output / (family + "-native-" + state + ".png")
         screenshot(udid, target)
         result["native_screenshots"].append(target.name)
+
+    def check_capture(target):
+        try:
+            report = check_home_screenshot(target)
+        except RuntimeError as error:
+            result["image_checks"].append({"image": target.name, "error": str(error)})
+            raise
+        result["image_checks"].append(dict(report, image=target.name))
 
     def cleanup(name, action):
         try:
@@ -180,16 +208,24 @@ def smoke_device(device, app, output):
                 stdout=log_stream, stderr=subprocess.STDOUT)
             time.sleep(1)
             stage("launch and wait for first Flutter frame")
-            launched = simctl("launch", "--terminate-running-process", udid, BUNDLE)
+            launched = simctl("launch", "--terminate-running-process", udid, BUNDLE, *engine_arguments)
             result["launch"] = launched.strip()
             observe("launched", launched)
+            original_pid = re.search(r":\s*(\d+)\s*$", launched)
+            if original_pid is None:
+                raise RuntimeError("Cannot determine the launched app PID")
             wait_for_frame(log_path, log_process)
             result["first_flutter_frame"] = True
             time.sleep(2)
             # Opening a custom URL may leave a system confirmation alert on
             # screen. Keep it last so it cannot obscure the normal UI checks.
-            for state in ("home-light", "home-dark", "resumed", "warm-link"):
-                stage(state)
+            sequence = [(state, state) for state in ("home-light", "home-dark", "resumed")]
+            sequence.extend((f"stress-{cycle:02d}-{state}", state)
+                            for cycle in range(1, stress_cycles + 1)
+                            for state in ("home-light", "home-dark", "resumed"))
+            sequence.append(("warm-link", "warm-link"))
+            for checkpoint, state in sequence:
+                stage(checkpoint)
                 if state == "warm-link":
                     simctl("openurl", udid, "linkremote://")
                     result["url_open_requested"] = True
@@ -199,15 +235,23 @@ def smoke_device(device, app, output):
                     result["background_launch"] = simctl("launch", udid, "com.apple.mobilesafari").strip()
                     time.sleep(1)
                     observe("begin_resume")
-                    result["resume_launch"] = simctl("launch", udid, BUNDLE).strip()
+                    result["resume_launch"] = simctl("launch", udid, BUNDLE, *engine_arguments).strip()
                     observe("end_resume")
+                    resumed_pid = re.search(r":\s*(\d+)\s*$", result["resume_launch"])
+                    if resumed_pid is None or resumed_pid[1] != original_pid[1]:
+                        raise RuntimeError("App exited or restarted during foreground return")
                 elif state == "home-dark":
                     simctl("ui", udid, "appearance", "dark")
+                elif state == "home-light" and checkpoint != "home-light":
+                    simctl("ui", udid, "appearance", "light")
                 time.sleep(2)
-                target = output / (family + "-" + state + ".png")
+                target = output / (family + "-" + checkpoint + ".png")
                 screenshot(udid, target)
                 result["screenshots"].append(target.name)
-                if state == "home-light" and _DIAGNOSTICS.get() is not None:
+                check_capture(target)
+                if state == "resumed" and checkpoint.startswith("stress-"):
+                    result["stress_cycles_completed"] += 1
+                if checkpoint == "home-light" and _DIAGNOSTICS.get() is not None:
                     # Extra raw images are diagnostic evidence only, never a
                     # visual-pass assertion or a replacement for the original.
                     for index in (1, 2):
@@ -218,6 +262,8 @@ def smoke_device(device, app, output):
                             result.setdefault("diagnostic_screenshots", []).append(extra.name)
                         except (RuntimeError, OSError, subprocess.SubprocessError) as error:
                             observe("error", "extra light screenshot", error)
+                        else:
+                            check_capture(extra)
             stage("verify original process and application log")
             pid = re.search(r":\s*(\d+)\s*$", launched)
             if pid is None:
@@ -262,7 +308,8 @@ def smoke_device(device, app, output):
     return result
 
 
-def smoke_fresh_device(device, runtime, inventory_udids, app, output):
+def smoke_fresh_device(device, runtime, inventory_udids, app, output,
+                       renderer="default", stress_cycles=0):
     """Create a new data container, then delete only the UUID returned by this create."""
     result = {"model": device["name"], "screenshots": [], "passed": False,
               "inventory_udid": device["udid"], "qa_created_device": False,
@@ -286,7 +333,8 @@ def smoke_fresh_device(device, runtime, inventory_udids, app, output):
         result["qa_created_device"] = True
         result["udid"] = owned_udid
         stage = "run isolated simulator"
-        result.update(smoke_device(selected, app, output))
+        result.update(smoke_device(selected, app, output, renderer=renderer,
+                                   stress_cycles=stress_cycles))
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
         result["error"] = str(error)
         result["failed_stage"] = stage
@@ -314,6 +362,10 @@ def main():
                         help="Create and clean up only QA-owned devices of the same runtime and types")
     parser.add_argument("--diagnostics", action="store_true",
                         help="Collect bounded read-only OS/host evidence; does not change smoke gates")
+    parser.add_argument("--renderer", choices=("default", "skia"), default="default",
+                        help="Request default engine or disable Impeller for a diagnostic A/B; not backend proof")
+    parser.add_argument("--stress-cycles", type=int, choices=range(7), default=0,
+                        help="Additional bounded light/dark/foreground-return cycles before the URL prompt (0..6)")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output directory already exists; choose a new path to preserve prior evidence")
@@ -338,14 +390,21 @@ def main():
         inventory_udids = {device["udid"] for group in inventory["devices"].values()
                            for device in group if device.get("udid")}
         results = [(smoke_fresh_device(device, runtime, inventory_udids,
-                                      args.app.resolve(), args.output.resolve())
+                                      args.app.resolve(), args.output.resolve(),
+                                      renderer=args.renderer, stress_cycles=args.stress_cycles)
                     if args.fresh_devices else
-                    smoke_device(device, args.app.resolve(), args.output.resolve())) for device in devices]
+                    smoke_device(device, args.app.resolve(), args.output.resolve(),
+                                 renderer=args.renderer, stress_cycles=args.stress_cycles)) for device in devices]
         report = {"runtime": runtime, "devices": results,
+                  "requested_renderer": args.renderer, "renderer_backend_verified": False,
+                  "stress_cycles_requested": args.stress_cycles,
                   "device_source": "qa_created" if args.fresh_devices else "runner_inventory",
                   "scope": "Native Safari/Settings control screenshots for manual comparison, followed by "
                            "first native Flutter frame and original process survival, with light/dark and "
-                           "foreground-return screenshots for manual inspection before requesting a URL. "
+                           "foreground-return screenshots with a negative-only known black-bar/full-black "
+                           "corruption gate; no finding is not visual approval. Manual inspection remains "
+                           "required, and a renderer flag is a request, not verified backend selection. "
+                           "Optional stress cycles complete before requesting a URL. "
                            "URL delivery is not verified; system confirmation requires manual verification. "
                            "Does not validate live remote input, camera, cellular or device performance."}
         if collector is not None:

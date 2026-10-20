@@ -6,7 +6,7 @@ on:
       build_target:
         description: Build targets, or replay an exact Simulator App on clean runners
         type: choice
-        options: [both, device, simulator, simulator-ui-replay]
+        options: [both, device, simulator, simulator-ui-replay, simulator-renderer-ab]
         default: both
       simulator_source_run:
         description: UI replay only - exact source run ID (not a new App build)
@@ -46,17 +46,18 @@ permissions:
 
 jobs:
   ios-simulator-ui-replay:
-    if: inputs.build_target == 'simulator-ui-replay'
-    name: ios-ui-replay-${{ matrix.family }}
+    if: inputs.build_target == 'simulator-ui-replay' || inputs.build_target == 'simulator-renderer-ab'
+    name: ios-ui-replay-${{ matrix.family }}-${{ matrix.renderer }}
     runs-on: macos-15-intel
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
         family: ${{ fromJSON(inputs.replay_family == 'iphone' && '["iphone"]' || inputs.replay_family == 'ipad' && '["ipad"]' || '["iphone","ipad"]') }}
+        renderer: ${{ fromJSON(inputs.build_target == 'simulator-renderer-ab' && '["default","skia"]' || '["default"]') }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-      REPLAY_EVIDENCE: flutter/build/ios/simulator-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}
+      REPLAY_EVIDENCE: flutter/build/ios/simulator-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}-${{ matrix.renderer }}
     steps:
       - name: Checkout only the UI harness
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -73,6 +74,7 @@ jobs:
           xcrun simctl list devices booted
           xcrun simctl help bootstatus
           python3 -m unittest discover -s flutter/ios -p 'test_simulator_smoke.py' -v
+          python3 -m unittest discover -s flutter/ios -p 'test_verify_simulator_image.py' -v
           python3 -m unittest discover -s flutter/ios -p 'test_simulator_diagnostics.py' -v
           python3 -m unittest discover -s flutter/ios -p 'test_simulator_replay_workflow.py' -v
           python3 -m unittest discover -s flutter/ios -p 'test_verify_simulator_replay.py' -v
@@ -113,6 +115,8 @@ jobs:
           DEVICE_FAMILY: ${{ matrix.family }}
           FRESH_DEVICES: ${{ inputs.simulator_fresh_devices }}
           DIAGNOSTICS: ${{ inputs.simulator_diagnostics }}
+          RENDERER_AB: ${{ inputs.build_target == 'simulator-renderer-ab' }}
+          RENDERER: ${{ matrix.renderer }}
         run: |
           fresh_options=()
           if [[ "$FRESH_DEVICES" == true ]]; then
@@ -120,6 +124,11 @@ jobs:
           fi
           if [[ "$DIAGNOSTICS" == true ]]; then
             fresh_options+=(--diagnostics)
+          fi
+          # Controlled hypothesis test, not a product renderer policy change.
+          # Both legs use the same verified historical App ZIP and strict gates.
+          if [[ "$RENDERER_AB" == true ]]; then
+            fresh_options+=(--renderer "$RENDERER" --stress-cycles 6 --fresh-devices)
           fi
           python3 flutter/ios/simulator_smoke.py \
             --app simulator-replay-app/Runner.app \
@@ -129,12 +138,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: linkremote-ios-ui-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}
+          name: linkremote-ios-ui-replay-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.family }}-${{ matrix.renderer }}
           path: ${{ env.REPLAY_EVIDENCE }}
           if-no-files-found: warn
 
   ios-unsigned:
-    if: inputs.build_target != 'simulator-ui-replay'
+    if: inputs.build_target != 'simulator-ui-replay' && inputs.build_target != 'simulator-renderer-ab'
     name: ios-${{ matrix.mode }}
     # Pin the CPU architecture: macos-15 is now Apple Silicon, while our
     # simulator core and the baseline's x64-ios libraries target Intel.
