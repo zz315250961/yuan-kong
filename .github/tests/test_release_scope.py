@@ -18,6 +18,13 @@ def on_block(source):
     return match.group("body") if match else ""
 
 
+def job_block(source, name):
+    match = re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)", source)
+    if not match:
+        raise ValueError(f"Missing release job: {name}")
+    return match[1]
+
+
 def stable_release_version(homepage, manifest):
     """The public site's stable version is independent of a candidate build."""
     site = re.search(r'title:\s*["\']LinkRemote\b[^"\']*["\']\s*,\s*sub:\s*["\']v([0-9]+\.[0-9]+\.[0-9]+)\s*·', homepage)
@@ -77,9 +84,52 @@ class ReleaseScopeTest(unittest.TestCase):
         self.assertIn("Upload Windows candidate packages", workflow)
         self.assertIn("${{ github.run_id }}-${{ github.run_attempt }}", workflow)
         self.assertIn("Require configured Android signing identity", workflow)
-        self.assertIn('grep -Fx "Signer #1 certificate SHA-256 digest: ${EXPECTED_ANDROID_CERT_SHA256}"', workflow)
+        self.assertIn('python .github/verify_android_signature.py android-signature.txt --expected-sha256 "$EXPECTED_ANDROID_CERT_SHA256"', workflow)
         self.assertIn("c99e74633706c5ac413bf3c4e4782ceabd7b156eae6b288664986927d1aa1b01", workflow)
         self.assertNotIn("Publish unsigned apk package", workflow)
+
+    def test_android_only_is_typed_opt_in_and_only_skips_non_android_jobs(self):
+        workflow = text("linkremote-release.yml")
+        self.assertRegex(on_block(workflow), r"(?s)android_only:\n\s+description:[^\n]+\n\s+required: true\n\s+type: boolean\n\s+default: false")
+        gate = "if: github.event_name != 'workflow_dispatch' || inputs.android_only != true"
+        self.assertEqual(workflow.count(gate), 3)
+        for job in ("build-privacy-window", "build-for-windows-flutter", "web-management"):
+            self.assertIn(gate, job_block(workflow, job))
+        for job in ("prepare-release", "generate-bridge", "build-rustdesk-android"):
+            self.assertNotIn("inputs.android_only", job_block(workflow, job))
+        # The exact condition retains tag builds and default full-platform dispatch.
+        for event, android_only, expected_full in (
+            ("push", False, True), ("push", True, True),
+            ("workflow_dispatch", False, True), ("workflow_dispatch", True, False),
+        ):
+            self.assertEqual(event != "workflow_dispatch" or android_only is not True, expected_full)
+
+    def test_android_only_publication_guard_is_wired_into_existing_source_validation(self):
+        workflow = text("linkremote-release.yml")
+        self.assertIn('ANDROID_ONLY: "${{ github.event_name == \'workflow_dispatch\' && inputs.android_only == true }}"', workflow)
+        helper = (ROOT / ".github/release_candidate.py").read_text(encoding="utf-8")
+        self.assertIn('android_only = os.environ.get("ANDROID_ONLY") == "true"', helper)
+        self.assertIn('validate_source(source_sha, os.environ.get("EXPECTED_SOURCE_SHA", ""), version, tag, publish, tag_sha, android_only)', helper)
+        self.assertIn("if android_only and publish:", helper)
+        self.assertIn("publication is forbidden", helper)
+        self.assertIn("python .github/release_candidate.py --check-source", job_block(workflow, "prepare-release"))
+
+    def test_android_signature_parser_keeps_real_verifier_and_alignment_gates(self):
+        workflow = text("linkremote-release.yml")
+        android = job_block(workflow, "build-rustdesk-android")
+        verification = android.split("- name: Verify signed Android candidate and record provenance", 1)[1].split("- name: Upload Artifacts", 1)[0]
+        self.assertIn("set -euo pipefail", verification)
+        commands = (
+            'apksigner" verify --verbose --print-certs "$SIGNED_APK" | tee android-signature.txt',
+            'python .github/verify_android_signature.py android-signature.txt --expected-sha256 "$EXPECTED_ANDROID_CERT_SHA256"',
+            'zipalign" -c -P 16 -v 4 "$SIGNED_APK"',
+            'python tests/verify_android_artifact.py "$SIGNED_APK"',
+            'python .github/release_candidate.py --platform android',
+        )
+        positions = [verification.index(command) for command in commands]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("grep -Fx", verification)
+        self.assertIn("python .github/tests/test_verify_android_signature.py -v", job_block(workflow, "prepare-release"))
 
     def test_all_release_uploads_require_explicit_publication(self):
         workflow = text("linkremote-release.yml")

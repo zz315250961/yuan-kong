@@ -15,7 +15,9 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def validate_source(source_sha, expected_sha, version, tag, publish, tag_sha=None):
+def validate_source(source_sha, expected_sha, version, tag, publish, tag_sha=None, android_only=False):
+    if android_only and publish:
+        raise ValueError("Android-only mode is restricted to candidate-only runs; publication is forbidden")
     if not re.fullmatch(r"[0-9a-f]{40}", expected_sha or ""):
         raise ValueError("Expected source must be an exact 40-character lowercase commit SHA")
     if source_sha != expected_sha:
@@ -106,17 +108,18 @@ def main(argv=None):
     source_sha = git_output("rev-parse", "HEAD")
     version = os.environ.get("VERSION", "")
     publish = os.environ.get("PUBLISH_RELEASE") == "true"
+    android_only = os.environ.get("ANDROID_ONLY") == "true"
     tag = os.environ.get("TAG_NAME", "")
     tag_sha = None
-    if publish and tag == f"v{version}":
+    if publish and not android_only and tag == f"v{version}":
         try:
             tag_sha = git_output("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
         except subprocess.CalledProcessError as error:
             raise ValueError("Publication tag does not exist in the source checkout") from error
-    validate_source(source_sha, os.environ.get("EXPECTED_SOURCE_SHA", ""), version, tag, publish, tag_sha)
+    validate_source(source_sha, os.environ.get("EXPECTED_SOURCE_SHA", ""), version, tag, publish, tag_sha, android_only)
     metadata = candidate_versions(ROOT, version)
     if args.check_source:
-        print(json.dumps({"source_commit": source_sha, **metadata, "publish_release": publish}, indent=2))
+        print(json.dumps({"source_commit": source_sha, **metadata, "publish_release": publish, "android_only": android_only}, indent=2))
         return 0
     manifest = candidate_manifest(ROOT, args.platform, args.artifacts, source_sha, metadata, os.environ)
     # Avoid overwriting evidence from another invocation in this checkout.

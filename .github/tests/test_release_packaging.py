@@ -72,6 +72,17 @@ class CandidateSourceTest(unittest.TestCase):
     def test_candidate_does_not_require_or_create_a_tag(self):
         CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", "branch-name", False)
 
+    def test_android_only_candidate_keeps_exact_source_pin(self):
+        CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", "", False, android_only=True)
+        with self.assertRaisesRegex(ValueError, "explicitly requested source"):
+            CANDIDATE.validate_source(self.SHA, "b" * 40, "1.0.44", "", False, android_only=True)
+
+    def test_android_only_publication_is_explicitly_refused_even_with_a_valid_tag(self):
+        for tag, tag_sha in (("v1.0.44", self.SHA), ("", None)):
+            with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, "Android-only.*publication is forbidden"):
+                CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", tag, True, tag_sha, android_only=True)
+        CANDIDATE.validate_source(self.SHA, self.SHA, "1.0.44", "v1.0.44", True, self.SHA, android_only=False)
+
     def test_source_pin_rejects_blank_short_moving_and_different_refs(self):
         for value in ("", "a" * 7, "branch-name", "b" * 40):
             with self.subTest(value=value), self.assertRaises(ValueError):

@@ -15,6 +15,11 @@ on:
         required: true
         type: boolean
         default: true
+      android_only:
+        description: Build only an Android candidate; forbidden for publication
+        required: true
+        type: boolean
+        default: false
       tag:
         description: Existing version tag (required only when candidate_only is false)
         required: false
@@ -36,6 +41,7 @@ env:
   TAG_NAME: "${{ github.event.inputs.tag || github.ref_name }}"
   EXPECTED_SOURCE_SHA: "${{ github.event_name == 'push' && github.sha || inputs.source_sha }}"
   PUBLISH_RELEASE: "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.candidate_only == false) }}"
+  ANDROID_ONLY: "${{ github.event_name == 'workflow_dispatch' && inputs.android_only == true }}"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   # vcpkg version: 2025.08.27
   # If we change the `VCPKG COMMIT_ID`, please remember:
@@ -70,6 +76,7 @@ jobs:
         run: |
           python .github/tests/test_release_scope.py -v
           python .github/tests/test_release_packaging.py -v
+          python .github/tests/test_verify_android_signature.py -v
       - name: Refuse to overwrite an existing release
         if: env.PUBLISH_RELEASE == 'true'
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -177,6 +184,7 @@ jobs:
 
   build-privacy-window:
     needs: [prepare-release]
+    if: github.event_name != 'workflow_dispatch' || inputs.android_only != true
     runs-on: windows-2022
     strategy:
         fail-fast: false
@@ -207,6 +215,7 @@ jobs:
   build-for-windows-flutter:
     name: ${{ matrix.job.target }}
     needs: [build-privacy-window, generate-bridge]
+    if: github.event_name != 'workflow_dispatch' || inputs.android_only != true
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
@@ -649,7 +658,7 @@ jobs:
           set -euo pipefail
           test -f "$SIGNED_APK"
           "${ANDROID_HOME}/build-tools/${ANDROID_SIGN_TOOL_VERSION}/apksigner" verify --verbose --print-certs "$SIGNED_APK" | tee android-signature.txt
-          grep -Fx "Signer #1 certificate SHA-256 digest: ${EXPECTED_ANDROID_CERT_SHA256}" android-signature.txt
+          python .github/verify_android_signature.py android-signature.txt --expected-sha256 "$EXPECTED_ANDROID_CERT_SHA256"
           "${ANDROID_HOME}/build-tools/${ANDROID_SIGN_TOOL_VERSION}/zipalign" -c -P 16 -v 4 "$SIGNED_APK"
           python tests/verify_android_artifact.py "$SIGNED_APK"
           python .github/release_candidate.py --platform android --output android-provenance.json "$SIGNED_APK"
@@ -678,6 +687,7 @@ jobs:
 
   web-management:
     needs: [prepare-release]
+    if: github.event_name != 'workflow_dispatch' || inputs.android_only != true
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout source code
