@@ -288,9 +288,24 @@ class VoiceSourceContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "shared VoiceProcessingIO"):
             check_sources(self.root)
 
-    def test_native_teardown_failure_cannot_restore_normal_audio(self):
-        self.replace("src/client/ios_voice.rs", "binding.restore = cleanup.is_ok()", "binding.restore = true")
+    def test_unreleased_native_unit_cannot_restore_normal_audio(self):
+        self.replace("src/client/ios_voice.rs", "binding.restore = playback.is_native_released()", "binding.restore = true")
         with self.assertRaisesRegex(ValueError, "confirmed native duplex teardown"):
+            check_sources(self.root)
+
+    def test_global_quarantine_cannot_restore_normal_audio(self):
+        self.replace("src/client/ios_voice.rs", "&& super::ios_duplex::playback_can_restore()", "&& true")
+        with self.assertRaisesRegex(ValueError, "confirmed native duplex teardown"):
+            check_sources(self.root)
+
+    def test_safely_disposed_stop_error_cannot_leave_normal_audio_muted(self):
+        self.replace("src/client/ios_voice.rs", "binding.restore = playback.is_native_released()", "binding.restore = cleanup.is_ok() && playback.is_native_released()")
+        with self.assertRaisesRegex(ValueError, "confirmed native duplex teardown"):
+            check_sources(self.root)
+
+    def test_safely_disposed_stop_error_must_still_be_reported(self):
+        self.replace("src/client/ios_voice.rs", "(Ok(()), Err(reason)) => Err(reason),", "(Ok(()), Err(_)) => Ok(()),")
+        with self.assertRaisesRegex(ValueError, "report its stop/uninitialize error"):
             check_sources(self.root)
 
     def test_uncertain_teardown_cannot_send_an_unconditional_end(self):

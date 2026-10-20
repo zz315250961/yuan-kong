@@ -790,7 +790,7 @@ fn record(
     // Keep this non-Send platform stream in the same worker until teardown.
     if stopped(stop, cancelled) {
         let cleanup = stream.stop();
-        binding.restore = cleanup.is_ok() && playback.is_native_released() && super::ios_duplex::playback_can_restore();
+        binding.restore = playback.is_native_released() && super::ios_duplex::playback_can_restore();
         drop(stream);
         while queue.pop().is_some() {}
         packetizer.reset();
@@ -874,7 +874,7 @@ fn record(
     })();
     // Stop callbacks first, then discard queued PCM and partial packet state.
     let cleanup = stream.stop();
-    binding.restore = cleanup.is_ok() && playback.is_native_released() && super::ios_duplex::playback_can_restore();
+    binding.restore = playback.is_native_released() && super::ios_duplex::playback_can_restore();
     drop(stream);
     while queue.pop().is_some() {}
     packetizer.reset();

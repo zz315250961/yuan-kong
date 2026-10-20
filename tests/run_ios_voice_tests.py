@@ -115,8 +115,10 @@ def check_sources(root=ROOT):
         raise ValueError("VoiceProcessingIO cannot start before exclusive playback binding or restore on uncertain startup")
     if "VoicePacketizer::new(VOICE_SAMPLE_RATE,1)" not in record or "playback.is_failed()" not in record or "playback.is_cancelled()" not in record:
         raise ValueError("Duplex capture must use fixed mono 48k PCM and observe native route failure/cancellation")
-    if "letcleanup=stream.stop();binding.restore=cleanup.is_ok()&&playback.is_native_released()&&super::ios_duplex::playback_can_restore();drop(stream);" not in record:
+    if record.count("letcleanup=stream.stop();binding.restore=playback.is_native_released()&&super::ios_duplex::playback_can_restore();drop(stream);") != 2:
         raise ValueError("Normal audio playback cannot restore before confirmed native duplex teardown")
+    if "match(result,cleanup){(Err(reason),_)=>Err(reason),(Ok(()),Err(reason))=>Err(reason),(Ok(()),Ok(()))=>Ok(()),}" not in record:
+        raise ValueError("A safely disposed native unit must still report its stop/uninitialize error")
     if 'ifself.restore{let_=self.sender.send(MediaData::IosVoicePlaybackEnd{epoch:self.epoch});}' not in re.sub(r"\s+", "", source):
         raise ValueError("An uncertain native teardown must quarantine playback instead of sending End")
     format_match = re.search(r"queue_voice_message\(\s*sender,\s*request_timestamp,\s*audio_format_message\(\)", source)
