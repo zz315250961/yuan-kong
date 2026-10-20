@@ -51,6 +51,17 @@ class SimulatorReplayWorkflowTests(unittest.TestCase):
         self.assertIn("test_verify_simulator_image.py", self.replay)
         self.assertNotIn("FLTEnableImpeller", self.replay)
 
+    def test_lightweight_voice_check_compiles_real_module_for_both_apple_targets(self):
+        self.assertIn("ios-voice-native", self.text.split("permissions:", 1)[0])
+        native = self.text.split("  ios-voice-native:", 1)[1]
+        self.assertIn("if: inputs.build_target == 'ios-voice-native'", native)
+        self.assertIn("targets: aarch64-apple-ios,x86_64-apple-ios", native)
+        self.assertIn("python3 tests/run_ios_duplex_tests.py\n", native)
+        for target in ("aarch64-apple-ios", "x86_64-apple-ios"):
+            self.assertIn("python3 tests/run_ios_duplex_tests.py --check-native " + target, native)
+        self.assertNotIn("continue-on-error", native)
+        self.assertIn("inputs.build_target != 'ios-voice-native'", self.build)
+
 
 if __name__ == "__main__":
     unittest.main()

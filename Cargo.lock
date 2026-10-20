@@ -7277,6 +7277,7 @@ dependencies = [
  "cocoa 0.24.1",
  "core-foundation 0.9.4",
  "core-graphics 0.22.3",
+ "coreaudio-rs",
  "cpal",
  "crossbeam-queue",
  "ctrlc",
