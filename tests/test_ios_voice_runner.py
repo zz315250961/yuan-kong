@@ -369,6 +369,16 @@ class VoiceSourceContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "saved only after AudioDecoder validates"):
             check_sources(self.root)
 
+    def test_decoder_rate_cannot_depend_only_on_cpal_initialization(self):
+        self.replace("src/client.rs", "self.sample_rate.0 = f.sample_rate;", "// source rate only set after successful CPAL configuration")
+        with self.assertRaisesRegex(ValueError, "decoder rate must update independently"):
+            check_sources(self.root)
+
+    def test_new_decoder_cannot_keep_a_zero_or_stale_source_rate(self):
+        self.replace("src/client.rs", "self.sample_rate.0 = f.sample_rate;", "self.sample_rate.0 = self.sample_rate.0;")
+        with self.assertRaisesRegex(ValueError, "decoder rate must update independently"):
+            check_sources(self.root)
+
     def test_new_audio_format_cannot_bypass_native_quarantine(self):
         self.replace("src/client.rs", "if !ios_duplex::playback_can_restore() {", "if false {")
         with self.assertRaisesRegex(ValueError, "unresolved VoiceProcessingIO ownership"):

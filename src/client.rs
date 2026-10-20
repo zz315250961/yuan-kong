@@ -1453,6 +1453,7 @@ impl AudioHandler {
                 #[cfg(target_os = "ios")]
                 {
                     self.ios_last_audio_format = Some(f.clone());
+                    self.sample_rate.0 = f.sample_rate;
                 }
                 let buffer = vec![0.; f.sample_rate as usize * f.channels as usize];
                 self.audio_decoder = Some((d, buffer));

@@ -179,6 +179,9 @@ def check_sources(root=ROOT):
     remembered_format = "self.ios_last_audio_format=Some(f.clone());"
     if audio_format.count(remembered_format) != 1 or valid_format.count(remembered_format) != 1:
         raise ValueError("iOS playback restore format must be saved only after AudioDecoder validates it")
+    decoder_rate = "self.sample_rate.0=f.sample_rate;"
+    if audio_format.count(decoder_rate) != 1 or valid_format.count(decoder_rate) != 1:
+        raise ValueError("Validated iOS decoder rate must update independently of ordinary playback initialization")
     ordinary_audio = method_body(client[client.index('#[cfg(not(target_os = "linux"))]\n    fn start_audio'):], "start_audio")
     guard = '#[cfg(target_os="ios")]if!ios_duplex::playback_can_restore(){bail!("iOSordinaryaudioisunavailablewhilevoicedeviceownershipisunresolved");}'
     if guard not in ordinary_audio or ordinary_audio.index(guard) > ordinary_audio.index("letdevice=AUDIO_HOST"):
