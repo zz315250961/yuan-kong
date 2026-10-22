@@ -75,6 +75,8 @@ Simulator 模式使用软件解码、Debug Flutter，验证 UI 和启动链路�
 
 当前用户尚无可用 Mac，也没有付费 Apple Developer 账号；因此目前没有可执行的本地真机签名环境。云端的无签名设备构建和 Simulator 检查不受影响，但上传的 unsigned `.app` 不是可直接安装到 iPhone/iPad 的安装版。
 
+2026-10-22 用户选择先免费个人签名自测，不购买会员。Windows 可使用 [Sideloadly](https://sideloadly.io/) 或 [AltServer](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows) 在本人本机对自己的设备签名，不一定先拥有 Mac；这些是第三方工具，账号/密码/验证码和设备信任均由用户本人操作。现有 633224d 设备原件已派生为正确 `Payload/Runner.app` 结构的本地 unsigned IPA，全部 266 成员内容/压缩字节/Unix 属性经独立复核未变；仍不是已签名或已安装版本。材料和说明在工作区 `artifacts/v1.0.44-candidate/ios-personal-signing-633224d/`，不放入 iOS 正式下载。免费个人签名通常七天续签，实际期限与能力以 [Apple 当前限制](https://developer.apple.com/help/account/basics/about-your-developer-account/) 和本机工具提示为准。
+
 用户自己的 iPhone/iPad 可用 Mac 上 Xcode 的 Apple ID Personal Team 进行开发测试，不必为了本机测试先购买付费账号：在 Xcode 登录 Apple ID，打开 `flutter/ios/Runner.xcworkspace`，选择 Runner 的 Signing & Capabilities → Automatically manage signing 与自己的 Personal Team，连接并信任设备、按系统提示开启 Developer Mode，再运行 Debug。
 
 免费团队若不能注册当前包名，使用自己唯一的临时开发包名；它会成为独立测试安装，不冒充正式升级。临时包名会使项目的正式身份校验故意失败，完成真机试验后还原；不要把该签名设置、账号或描述文件提交。Personal Team 的期限与可用能力受 Apple 限制，应由 Xcode 当前提示确认。付费分发、TestFlight 和 App Store 仍需要相应团队与签名环境；Windows 不能本地执行 Xcode 签名与 iOS Simulator。
