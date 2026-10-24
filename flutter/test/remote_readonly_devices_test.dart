@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_hbb/common.dart' show buildRemoteBlock;
+import 'package:flutter_hbb/common.dart' show MyTheme, buildRemoteBlock;
 import 'package:flutter_hbb/common/widgets/remote_home_layout.dart';
 import 'package:flutter_hbb/utils/account_device_sync.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,43 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 
 void main() {
+  for (final dark in [false, true]) {
+    testWidgets('safe notice CTA has readable opaque fill and works dark=$dark',
+        (tester) async {
+      var opens = 0;
+      await tester.pumpWidget(MaterialApp(
+        theme: dark ? MyTheme.darkTheme : MyTheme.lightTheme,
+        home: Scaffold(
+            body: RemoteProtectionNotice(
+          incomingOnly: false,
+          devicesLabel: 'My devices',
+          readOnlyLabel: 'Read-only',
+          onDevices: () => opens++,
+        )),
+      ));
+      final button = find.byWidgetPredicate((w) => w is ButtonStyleButton);
+      expect(button, findsOneWidget);
+      final material = tester.widget<Material>(
+          find.descendant(of: button, matching: find.byType(Material)));
+      expect(material.color?.alpha ?? 0, 255,
+          reason: 'The only safe entry needs a visible filled button');
+      final background = material.color!;
+      final label = tester.renderObject<RenderParagraph>(
+          find.descendant(of: button, matching: find.byType(RichText)).last);
+      final foreground = Color.alphaBlend(label.text.style!.color!, background);
+      final luminances = [
+        foreground.computeLuminance(),
+        background.computeLuminance()
+      ]..sort();
+      final contrast = (luminances.last + 0.05) / (luminances.first + 0.05);
+      expect(contrast, greaterThanOrEqualTo(4.5),
+          reason: 'The rendered CTA text must meet normal-text contrast');
+      expect(tester.getSize(button).height, greaterThanOrEqualTo(48));
+      await tester.tap(button);
+      expect(opens, 1);
+    });
+  }
+
   test(
       'readonly list refresh fetches peers without identity reads or registration',
       () async {

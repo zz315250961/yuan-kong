@@ -202,9 +202,11 @@ class RemoteProtectionNotice extends StatelessWidget {
                   ),
                   if (!incomingOnly) ...[
                     const SizedBox(height: 16),
-                    TextButton.icon(
-                      style:
-                          TextButton.styleFrom(minimumSize: const Size(48, 48)),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2F65BA),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(48, 48)),
                       onPressed: onDevices,
                       icon: const Icon(Icons.devices, size: 20),
                       label: Text('$devicesLabel ($readOnlyLabel)'),
