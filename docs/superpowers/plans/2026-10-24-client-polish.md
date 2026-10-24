@@ -17,6 +17,7 @@
 - 新版本为 1.0.45+77；保留 1.0.44 文件、用户配置和线上回滚路径。
 - 未签名工具等待风险确认；不输入 Apple 凭据，不自动重启。
 - 无 iPhone 真机时，不宣称通过真机签名、远控、双向语音或 120FPS 验收。
+- 2026-10-25用户新增授权：受限远程操作可通过独立只读入口查看“我的设备”，但不得去掉原密码/权限保护、远程开启安全开关或放开其他动作；补充规格 `2026-10-25-remote-device-readonly-spec.md` 优先于旧“纯呈现”限制。Task5及新候选验收须先于Task4生产切换。
 
 ## Review Focus
 
@@ -65,3 +66,23 @@
 - [ ] Back up exact current production pointers and metadata, stage new immutable packages and verify hashes before switching.
 - [ ] Atomically update download aliases and metadata; do not modify API code, database or accounts.
 - [ ] Download and hash-check the five public versioned/stable Windows/Android URLs; verify website/version API/health, retain prior packages, record actual limitations.
+
+### Task 5: Restricted remote My devices read-only exception（用户新增）
+
+**Files:** Modify `flutter/lib/common.dart`、`flutter/lib/desktop/pages/desktop_home_page.dart`、`flutter/lib/common/widgets/my_devices.dart`、`flutter/lib/common/widgets/remote_home_layout.dart`、`flutter/lib/models/user_model.dart`; add focused tests under `flutter/test/` only as needed.
+
+**Interfaces:** `buildRemoteBlock` accepts optional `Widget? blockedOverlay` inside its existing MouseRegion/Stack and outside the protected child; absent by default preserves every other caller. `showMyDevicesDialog({bool readOnly = false})` / `MyDevicesDialogContent(readOnly: false)` default unchanged. Desktop protected notice always calls the true variant. `UserModel.getMyDevices({bool syncDevice = true})` forwards `syncDevice && !isWeb` to existing account-device loader; readonly invokes false. A production presentation component may expose a nullable readonly label to replace action slots, not merely disable colors.
+
+- [x] Write actual-production failing tests for blocked safe entry vs absorbed security action/focus, pointer movement within the same MouseRegion, no exception overlay by default, readonly action suppression and unchanged normal card actions. Run focused tests and capture expected RED before implementation. No native bridge hooks/setters or copied fake full page.
+- [x] Add only the optional blocked overlay; retain current `canBeBlocked`/`shouldBeBlocked`/mask/ExcludeFocus/AbsorbPointer mechanics. Home passes an explicit protection notice and safe entry unless incoming-only; settings/CM calls remain unchanged. Use existing translate('My devices') / translate('Read-only') where available; clear complete Chinese explanation is consistent with the current custom client.
+- [x] Implement immutable readonly dialog mode, visible label, no connection/copy/remove UI, plus early readonly returns at all three action handlers. Keep account session/generation checks and normal/mobile defaults. Readonly loads use existing list GET without registration via syncDevice:false. Do not change server APIs, auth, native policy or configuration.
+- [x] Run focused GREEN; one full `flutter test --no-pub` for the changed code, targeted analyze, release scope; batch verify 700×600/1.3 text and light/dark synthetic views. Self-review, commit only owned task files, report exact commands/results/limits. Functional full168 preceded pureCTA styling/new2tests; finalfocused45 and assertion-only13passed. Exact-source CI full run remains Task6.
+- [x] Independent security/spec/quality task review before new source freeze. Fix scoped findings before proceeding; no publishing based only on widget tests. ReviewAPPROVED, Minor test strengthened in cd0252f; existing analyzer debt recorded, native publication gate still closed.
+
+### Task 6: Rebuilt restricted-device candidate and release continuation
+
+**Files:** Existing workflow/provenance/artifact helpers and QA/ledger only; new raw artifacts in a distinct candidate directory. No protocol/version bump required while1.0.45unpublished.
+
+- [ ] Freeze reviewed new source including Task5, push only fork feature branch and trigger candidate_only=true/android_only=false once. Record exact new run/source. Do not reuse a72 or413 payload as the fix.
+- [ ] Verify new original artifacts/source/run/platform/signature/16KiB, preserve local app/config and upgrade by new exact payload hashes. Warn that local service update can briefly interrupt the current remote session; no reboot/security bypass. Actual new safe entry opens and devices load while protected settings remain blocked; use reliable native evidence or user confirmation, never stale screenshot geometry.
+- [ ] Record group cache randomized-encryption exception only with valid login/device evidence; do not overwrite original strict helper records. Then continue Task4 existing reviewed cutover and completion-email workflow, retaining all residual iOS/signing limits.
