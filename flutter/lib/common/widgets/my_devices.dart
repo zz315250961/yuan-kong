@@ -7,6 +7,7 @@ import '../../common.dart';
 import '../../models/platform_model.dart';
 import '../../utils/account_device_sync.dart';
 import 'dialog.dart';
+import 'remote_home_layout.dart';
 
 Future<void> showMyDevicesDialog() async {
   await gFFI.dialogManager.show((setState, close, context) {
@@ -282,6 +283,8 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
         Align(
           alignment: Alignment.centerRight,
           child: IconButton(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            visualDensity: VisualDensity.standard,
             icon: const Icon(Icons.refresh, size: 20),
             tooltip: translate('Refresh'),
             onPressed: _removing.isEmpty ? _load : null,
@@ -317,122 +320,90 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: LayoutBuilder(builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 280;
-                    return Column(mainAxisSize: MainAxisSize.min, children: [
-                      Row(
-                        children: [
-                          _deviceIcon(os),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  name.isEmpty
-                                      ? (id.isEmpty ? '未命名设备' : id)
-                                      : name,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  controllerOnly
-                                      ? 'iOS 控制端（不提供被控 ID）'
-                                      : id.isEmpty
-                                          ? '设备 ID 尚未就绪'
-                                          : self
-                                              ? '$id（${translate('This device')}）'
-                                              : id,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                if (os.isNotEmpty)
-                                  Text(os,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall),
-                                if (lastLogin != null)
-                                  Text(
-                                      '最近登录：${lastLogin.toLocal().toString().split('.').first}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          if (!compact)
-                            IconButton(
-                              constraints: const BoxConstraints(
-                                  minWidth: 48, minHeight: 48),
-                              icon: const Icon(Icons.settings_remote, size: 18),
-                              tooltip: translate('Connect'),
-                              onPressed: onConnect,
-                            ),
-                          if (removing)
-                            const SizedBox(
-                              width: 48,
-                              height: 48,
-                              child: Center(
-                                  child: SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2))),
-                            )
-                          else
-                            PopupMenuButton<String>(
-                              tooltip: translate('More'),
-                              constraints: const BoxConstraints(minWidth: 160),
-                              icon: const Icon(Icons.more_vert),
-                              onSelected: (action) async {
-                                if (action == 'copy') {
-                                  final account = _loadedSession;
-                                  if (account == null ||
-                                      !await _sameSession(account) ||
-                                      !mounted) return;
-                                  await Clipboard.setData(
-                                      ClipboardData(text: id));
-                                  showToast(translate('Copied'));
-                                } else if (action == 'remove') {
-                                  _deleteDevice(d);
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                PopupMenuItem(
-                                    value: 'copy',
-                                    enabled: canConnect,
-                                    child:
-                                        Text(translate('Copy to clipboard'))),
-                                PopupMenuItem(
-                                    value: 'remove',
-                                    enabled: uuid.isNotEmpty,
-                                    child: Text(translate('Remove device'))),
-                              ],
-                            ),
-                        ],
-                      ),
-                      if (compact)
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            style: TextButton.styleFrom(
-                                minimumSize: const Size(48, 48)),
-                            onPressed: onConnect,
-                            icon: const Icon(Icons.settings_remote, size: 18),
-                            label: Text(translate('Connect')),
-                          ),
+                  child: DeviceDetailsLayout(
+                    icon: _deviceIcon(os),
+                    details: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name.isEmpty ? (id.isEmpty ? '未命名设备' : id) : name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
-                    ]);
-                  }),
+                        const SizedBox(height: 2),
+                        Text(
+                          controllerOnly
+                              ? 'iOS 控制端（不提供被控 ID）'
+                              : id.isEmpty
+                                  ? '设备 ID 尚未就绪'
+                                  : self
+                                      ? '$id（${translate('This device')}）'
+                                      : id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        if (os.isNotEmpty)
+                          Text(os,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall),
+                        if (lastLogin != null)
+                          Text(
+                              '最近登录：${lastLogin.toLocal().toString().split('.').first}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                    connectAction: TextButton.icon(
+                      style:
+                          TextButton.styleFrom(minimumSize: const Size(48, 48)),
+                      onPressed: onConnect,
+                      icon: const Icon(Icons.settings_remote, size: 18),
+                      label: Text(translate('Connect')),
+                    ),
+                    moreAction: removing
+                        ? const SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: Center(
+                                child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))),
+                          )
+                        : PopupMenuButton<String>(
+                            tooltip: translate('More'),
+                            constraints: const BoxConstraints(minWidth: 160),
+                            icon: const Icon(Icons.more_vert),
+                            onSelected: (action) async {
+                              if (action == 'copy') {
+                                final account = _loadedSession;
+                                if (account == null ||
+                                    !await _sameSession(account) ||
+                                    !mounted) return;
+                                await Clipboard.setData(
+                                    ClipboardData(text: id));
+                                showToast(translate('Copied'));
+                              } else if (action == 'remove') {
+                                _deleteDevice(d);
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                  value: 'copy',
+                                  enabled: canConnect,
+                                  child: Text(translate('Copy to clipboard'))),
+                              PopupMenuItem(
+                                  value: 'remove',
+                                  enabled: uuid.isNotEmpty,
+                                  child: Text(translate('Remove device'))),
+                            ],
+                          ),
+                  ),
                 ),
               );
             },

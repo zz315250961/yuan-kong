@@ -6,8 +6,8 @@ import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
-import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
+import 'package:flutter_hbb/common/widgets/remote_home_layout.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
@@ -61,13 +61,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     super.build(context);
     final isIncomingOnly = bind.isIncomingOnly();
     return _buildBlock(
-        child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        buildLeftPane(context),
-        if (!isIncomingOnly) const VerticalDivider(width: 1),
-        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
-      ],
+        child: RemoteHomeLayout(
+      localPane: buildLeftPane(context),
+      connectionPane: isIncomingOnly ? null : buildRightPane(context),
     ));
   }
 
@@ -91,8 +87,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         child: loadLogo(),
       ),
       buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
-      if (!isOutgoingOnly) buildPasswordBoard(context),
+      if (!isOutgoingOnly)
+        LocalIdentityGroup(
+          identity: buildIDBoard(context),
+          security: buildPasswordBoard(context),
+        ),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -131,20 +130,19 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
-        width: isIncomingOnly ? 280.0 : 200.0,
+        width: isIncomingOnly ? 280.0 : 240.0,
         color: Theme.of(context).colorScheme.background,
         child: Stack(
           children: [
             Column(
               children: [
-                SingleChildScrollView(
+                Flexible(child: SingleChildScrollView(
                   controller: _leftPaneScrollController,
                   child: Column(
                     key: _childKey,
                     children: children,
                   ),
-                ),
-                Expanded(child: Container())
+                )),
               ],
             ),
             if (isOutgoingOnly)
@@ -191,7 +189,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final model = gFFI.serverModel;
     return Container(
       margin: const EdgeInsets.only(left: 20, right: 11),
-      height: 57,
+      height: 84,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
@@ -294,7 +292,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     RxBool refreshHover = false.obs;
     RxBool editHover = false.obs;
     RxBool copyHover = false.obs;
-    final textColor = Theme.of(context).textTheme.titleLarge?.color;
     final showOneTime = model.approveMode != 'click' &&
         model.verificationMethod != kUsePermanentPassword;
     final permanentSet =
