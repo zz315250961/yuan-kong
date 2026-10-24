@@ -198,7 +198,8 @@ void main() {
           await tester.tap(find.text('My devices (Read-only)'));
           expect(clicks, 1);
         } else {
-          expect(find.byType(TextButton), findsNothing);
+          expect(find.byWidgetPredicate((w) => w is ButtonStyleButton),
+              findsNothing);
           expect(clicks, 0);
         }
       });
