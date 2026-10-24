@@ -3256,6 +3256,7 @@ Widget buildRemoteBlock(
     {required Widget child,
     required RxBool block,
     required bool mask,
+    Widget? blockedOverlay,
     WhetherUseRemoteBlock? use}) {
   return Obx(() => MouseRegion(
         onEnter: (_) async {
@@ -3272,6 +3273,8 @@ Widget buildRemoteBlock(
                 child: Container(
                   color: Colors.black.withOpacity(0.5),
                 )),
+          if (block.value && blockedOverlay != null)
+            Positioned.fill(child: blockedOverlay),
         ]),
       ));
 }

@@ -9,12 +9,22 @@ import '../../utils/account_device_sync.dart';
 import 'dialog.dart';
 import 'remote_home_layout.dart';
 
-Future<void> showMyDevicesDialog() async {
+Future<void> showMyDevicesDialog({bool readOnly = false}) async {
   await gFFI.dialogManager.show((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('My devices')),
+      title: Text(readOnly
+          ? '${translate('My devices')} (${translate('Read-only')})'
+          : translate('My devices')),
       contentBoxConstraints: BoxConstraints(maxWidth: 360, maxHeight: 420),
-      content: const MyDevicesDialogContent(),
+      content: readOnly
+          ? Column(mainAxisSize: MainAxisSize.min, children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text('只读模式：可查看和刷新设备列表；不能连接、复制 ID 或删除设备。'),
+              ),
+              const Flexible(child: MyDevicesDialogContent(readOnly: true)),
+            ])
+          : const MyDevicesDialogContent(),
       onCancel: close,
       actions: [
         dialogButton(translate('Close'), onPressed: close, isOutline: true),
@@ -24,7 +34,10 @@ Future<void> showMyDevicesDialog() async {
 }
 
 class MyDevicesDialogContent extends StatefulWidget {
-  const MyDevicesDialogContent({Key? key}) : super(key: key);
+  const MyDevicesDialogContent({Key? key, this.readOnly = false})
+      : super(key: key);
+
+  final bool readOnly;
 
   @override
   State<MyDevicesDialogContent> createState() => _MyDevicesDialogContentState();
@@ -42,10 +55,13 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
   var _requestInProgress = false;
   var _openingConnection = false;
   final _removing = <String>{};
+  // Capture once: a homepage protection-state change must never upgrade a dialog.
+  late final bool _readOnly;
 
   @override
   void initState() {
     super.initState();
+    _readOnly = widget.readOnly;
     _accountSubscription = gFFI.userModel.userName.listen((_) {
       if (!mounted) return;
       ++_loadGeneration;
@@ -92,7 +108,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
     final generation = ++_loadGeneration;
     try {
       final account = await gFFI.userModel.accountDeviceSession();
-      final devices = await gFFI.userModel.getMyDevices();
+      final devices = await gFFI.userModel.getMyDevices(syncDevice: !_readOnly);
       if (!mounted || generation != _loadGeneration) return;
       final current = await _sameSession(account);
       if (!mounted || generation != _loadGeneration) return;
@@ -139,6 +155,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
   }
 
   Future<void> _deleteDevice(Map<String, dynamic> device) async {
+    if (_readOnly) return;
     final generation = _loadGeneration;
     final account = _loadedSession;
     if (account == null ||
@@ -192,6 +209,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
   }
 
   Future<void> _connectDevice(String id) async {
+    if (_readOnly) return;
     if (!mounted || id.trim().isEmpty || _openingConnection) return;
     final account = _loadedSession;
     if (account == null || !await _sameSession(account) || !mounted) return;
@@ -321,6 +339,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: DeviceDetailsLayout(
+                    readOnlyLabel: _readOnly ? translate('Read-only') : null,
                     icon: _deviceIcon(os),
                     details: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -380,6 +399,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                             constraints: const BoxConstraints(minWidth: 160),
                             icon: const Icon(Icons.more_vert),
                             onSelected: (action) async {
+                              if (_readOnly) return;
                               if (action == 'copy') {
                                 final account = _loadedSession;
                                 if (account == null ||

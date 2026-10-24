@@ -123,10 +123,12 @@ class DeviceDetailsLayout extends StatelessWidget {
       {super.key,
       required this.icon,
       required this.details,
+      this.readOnlyLabel,
       required this.connectAction,
       required this.moreAction});
   final Widget icon;
   final Widget details;
+  final String? readOnlyLabel;
   final Widget connectAction;
   final Widget moreAction;
 
@@ -135,14 +137,21 @@ class DeviceDetailsLayout extends StatelessWidget {
         data: Theme.of(context).copyWith(visualDensity: VisualDensity.standard),
         child: LayoutBuilder(builder: (context, constraints) {
           final compact = constraints.maxWidth < 320;
-          final actions = Row(mainAxisSize: MainAxisSize.min, children: [
-            ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: connectAction),
-            ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: moreAction),
-          ]);
+          final actions = readOnlyLabel != null
+              ? Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(readOnlyLabel!,
+                      style: Theme.of(context).textTheme.bodySmall))
+              : Row(mainAxisSize: MainAxisSize.min, children: [
+                  ConstrainedBox(
+                      constraints:
+                          const BoxConstraints(minWidth: 48, minHeight: 48),
+                      child: connectAction),
+                  ConstrainedBox(
+                      constraints:
+                          const BoxConstraints(minWidth: 48, minHeight: 48),
+                      child: moreAction),
+                ]);
           return Column(mainAxisSize: MainAxisSize.min, children: [
             Row(children: [
               icon,
@@ -154,5 +163,57 @@ class DeviceDetailsLayout extends StatelessWidget {
               Align(alignment: Alignment.centerRight, child: actions),
           ]);
         }),
+      );
+}
+
+class RemoteProtectionNotice extends StatelessWidget {
+  const RemoteProtectionNotice(
+      {super.key,
+      required this.incomingOnly,
+      required this.devicesLabel,
+      required this.readOnlyLabel,
+      required this.onDevices});
+  final bool incomingOnly;
+  final String devicesLabel;
+  final String readOnlyLabel;
+  final VoidCallback onDevices;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.lock_outline, size: 28),
+                  const SizedBox(height: 12),
+                  const Text('远程配置保护已启用',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Text(
+                    incomingOnly
+                        ? '当前远程操作无法修改本机配置。'
+                        : '当前远程操作无法修改本机配置。您可以只读查看和刷新我的设备；连接、复制 ID 和删除设备操作不可用。',
+                    textAlign: TextAlign.center,
+                  ),
+                  if (!incomingOnly) ...[
+                    const SizedBox(height: 16),
+                    TextButton.icon(
+                      style:
+                          TextButton.styleFrom(minimumSize: const Size(48, 48)),
+                      onPressed: onDevices,
+                      icon: const Icon(Icons.devices, size: 20),
+                      label: Text('$devicesLabel ($readOnlyLabel)'),
+                    ),
+                  ],
+                ]),
+              ),
+            ),
+          ),
+        ),
       );
 }

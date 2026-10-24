@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
+import 'package:flutter_hbb/common/widgets/my_devices.dart';
 import 'package:flutter_hbb/common/widgets/remote_home_layout.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
@@ -69,7 +70,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Widget _buildBlock({required Widget child}) {
     return buildRemoteBlock(
-        block: _block, mask: true, use: canBeBlocked, child: child);
+        block: _block,
+        mask: true,
+        use: canBeBlocked,
+        blockedOverlay: RemoteProtectionNotice(
+          incomingOnly: bind.isIncomingOnly(),
+          devicesLabel: translate('My devices'),
+          readOnlyLabel: translate('Read-only'),
+          onDevices: () => showMyDevicesDialog(readOnly: true),
+        ),
+        child: child);
   }
 
   Widget buildLeftPane(BuildContext context) {

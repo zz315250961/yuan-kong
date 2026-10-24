@@ -309,11 +309,11 @@ class UserModel {
 
   /// 当前账号下所有设备（我的设备）。
   /// throw [RequestException]
-  Future<List<Map<String, dynamic>>> getMyDevices() async {
+  Future<List<Map<String, dynamic>>> getMyDevices({bool syncDevice = true}) async {
     deviceSyncError.value = '';
     final resp = await _deviceSync.loadPeers(
         (url, {headers}) => http.get(url, headers: headers),
-        syncDevice: !isWeb,
+        syncDevice: syncDevice && !isWeb,
         registrationError: (_) =>
             deviceSyncError.value = '本机设备暂未同步，已保留其他设备列表；可稍后刷新重试。');
     if (resp == null) return [];
