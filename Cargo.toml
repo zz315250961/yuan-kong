@@ -1,6 +1,6 @@
 [package]
 name = "linkremote"
-version = "1.0.44"
+version = "1.0.45"
 authors = ["LinkRemote Contributors"]
 edition = "2021"
 build= "build.rs"
