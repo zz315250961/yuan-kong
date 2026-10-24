@@ -307,7 +307,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 value: showOneTime ? model.serverPasswd.text : '-',
                 trailing: [
                   if (showOneTime)
-                    _hoverIcon(
+                    buildPasswordHoverIcon(
                       context,
                       hover: refreshHover,
                       tooltip: translate('Refresh Password'),
@@ -315,7 +315,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                       onTap: () => bind.mainUpdateTemporaryPassword(),
                     ),
                   if (showOneTime)
-                    _hoverIcon(
+                    buildPasswordHoverIcon(
                       context,
                       hover: copyHover,
                       tooltip: translate('Copy to clipboard'),
@@ -335,7 +335,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 value: permanentSet ? translate("Set") : translate("Not set"),
                 trailing: [
                   if (!bind.isDisableSettings())
-                    _hoverIcon(
+                    buildPasswordHoverIcon(
                       context,
                       hover: editHover,
                       tooltip: translate('Set permanent password'),
@@ -343,7 +343,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                       onTap: () => DesktopSettingPage.switch2page(
                           SettingsTabKey.safety),
                     ),
-                  _hoverIcon(
+                  buildPasswordHoverIcon(
                     context,
                     hover: copyHover,
                     tooltip: translate('Permanent password cannot be copied'),
@@ -401,7 +401,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  Widget _hoverIcon(BuildContext context,
+  Widget buildPasswordHoverIcon(BuildContext context,
       {required RxBool hover,
       required String tooltip,
       required IconData icon,
@@ -411,13 +411,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return InkWell(
       child: Tooltip(
         message: tooltip,
-        child: Obx(() => Icon(
-              icon,
-              color: enabled
-                  ? (hover.value ? textColor : Color(0xFFDDDDDD))
-                  : Colors.grey,
-              size: 20,
-            ).marginOnly(right: 8, top: 4)),
+        child: Obx(() {
+          final isHovered = hover.value;
+          return Icon(
+            icon,
+            color: enabled
+                ? (isHovered ? textColor : Color(0xFFDDDDDD))
+                : Colors.grey,
+            size: 20,
+          ).marginOnly(right: 8, top: 4);
+        }),
       ),
       onTap: enabled ? onTap : () {},
       onHover: enabled ? (value) => hover.value = value : null,
