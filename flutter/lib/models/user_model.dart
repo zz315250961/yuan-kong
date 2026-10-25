@@ -11,6 +11,8 @@ import 'package:uuid/uuid.dart';
 import '../common.dart';
 import '../utils/http_service.dart' as http;
 import '../utils/account_device_sync.dart';
+import '../utils/account_session_controller.dart';
+import 'account_login_session.dart';
 import 'model.dart';
 import 'platform_model.dart';
 
@@ -48,6 +50,26 @@ class UserModel {
       identity: _readAccountDevice,
       post: (url, {headers, body}) =>
           http.post(url, headers: headers, body: body));
+  late final accountSessions = AccountSessionClient(
+      session: accountDeviceSession,
+      get: (url, {headers}) => http.get(url, headers: headers),
+      post: (url, {headers, body}) =>
+          http.post(url, headers: headers, body: body),
+      onUnauthorized: (expected) async {
+        if (expected.matches(await accountDeviceSession())) {
+          await reset(resetOther: true);
+        }
+      });
+
+  Future<List<AccountLoginSession>> getLoginSessions(
+          {required AccountDeviceSession expectedSession}) async =>
+      await accountSessions.load(expectedSession) ?? const [];
+
+  Future<bool> revokeLoginSession(
+          {required String sessionId,
+          required String password,
+          required AccountDeviceSession expectedSession}) =>
+      accountSessions.revoke(expectedSession, sessionId, password);
 
   Future<AccountDeviceSession> accountDeviceSession() async {
     final token = bind.mainGetLocalOption(key: 'access_token');
@@ -277,14 +299,29 @@ class UserModel {
       {required String newEmail,
       required String code,
       required String password}) async {
-    final url = await bind.mainGetApiServer();
-    final resp = await http.post(Uri.parse('$url/api/change-email'),
-        headers: getHttpHeaders(),
-        body: jsonEncode({
-          'new_email': newEmail,
-          'code': code,
-          'password': password,
-        }));
+    final expected = await accountDeviceSession();
+    if (!await accountSessions.isCurrent(expected)) {
+      throw RequestException(401, '登录已失效，请重新登录');
+    }
+    final resp = await http
+        .post(accountDeviceRequestUri(expected.apiServer, '/api/change-email'),
+            headers: {
+              'Authorization': 'Bearer ${expected.token}',
+              'Content-Type': 'application/json'
+            },
+            body: jsonEncode({
+              'new_email': newEmail,
+              'code': code,
+              'password': password,
+            }))
+        .timeout(AccountSessionClient.timeout);
+    if (!await accountSessions.isCurrent(expected)) {
+      throw RequestException(409, '账号或服务器已切换，本次结果不再应用');
+    }
+    if (resp.statusCode == 401) {
+      await accountSessions.onUnauthorized?.call(expected);
+      throw RequestException(401, '登录已失效，请重新登录');
+    }
     final Map<String, dynamic> body;
     try {
       body = jsonDecode(decode_http_response(resp));
@@ -309,7 +346,8 @@ class UserModel {
 
   /// 当前账号下所有设备（我的设备）。
   /// throw [RequestException]
-  Future<List<Map<String, dynamic>>> getMyDevices({bool syncDevice = true}) async {
+  Future<List<Map<String, dynamic>>> getMyDevices(
+      {bool syncDevice = true}) async {
     deviceSyncError.value = '';
     final resp = await _deviceSync.loadPeers(
         (url, {headers}) => http.get(url, headers: headers),
