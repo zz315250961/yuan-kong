@@ -43,6 +43,8 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+import account_sessions
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.environ.get(
@@ -203,6 +205,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_codes_email_purpose "
             "ON verification_codes(email, purpose)"
         )
+        account_sessions.init_session_schema(conn)
         conn.commit()
 
 
@@ -268,16 +271,12 @@ def user_to_payload(row: sqlite3.Row) -> dict:
     }
 
 
-def create_session(conn: sqlite3.Connection, user_id: int) -> str:
+def create_session(conn: sqlite3.Connection, user_id: int, metadata=None) -> str:
     token = new_token()
     conn.execute(
         "DELETE FROM tokens WHERE expires_at < ?", (now_iso(),)
     )
-    conn.execute(
-        "INSERT INTO tokens (token, user_id, created_at, expires_at) "
-        "VALUES (?, ?, ?, ?)",
-        (token, user_id, now_iso(), expires_iso()),
-    )
+    account_sessions.insert_session(conn, token, user_id, now_iso(), expires_iso(), metadata)
     return token
 
 
@@ -448,6 +447,7 @@ def upsert_device(
 
 _rate_lock = threading.Lock()
 _rate_hits: dict[str, list[float]] = {}
+_session_revoke_attempts = account_sessions.RevokeAttemptLimiter()
 
 
 def rate_limited(key: str) -> bool:
@@ -524,7 +524,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(
             json.dumps(obj, ensure_ascii=False).encode("utf-8"),
             status,
-            extra_headers=extra_headers,
+            extra_headers={"Cache-Control": "no-store", **(extra_headers or {})},
         )
 
     def _send_raw(self, text: str, status=200):
@@ -581,6 +581,8 @@ class Handler(BaseHTTPRequestHandler):
                 """,
                 (token, now_iso()),
             ).fetchone()
+            if row is not None:
+                conn.execute("UPDATE tokens SET last_seen_at=? WHERE token=?", (now_iso(), token))
         return row
 
     def _client_key(self) -> str:
@@ -713,7 +715,7 @@ class Handler(BaseHTTPRequestHandler):
                 (email, hash_password(password, salt), salt, now_iso()),
             )
             user_id = cur.lastrowid
-            token = create_session(conn, user_id)
+            token = create_session(conn, user_id, account_sessions.session_metadata(body, web_session))
             row = conn.execute(
                 "SELECT * FROM users WHERE id = ?", (user_id,)
             ).fetchone()
@@ -809,7 +811,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(401, "邮箱或密码错误")
             if row["status"] == 0:
                 return self._error(403, "账号已被禁用")
-            token = create_session(conn, row["id"])
+            token = create_session(conn, row["id"], account_sessions.session_metadata(body, web_session))
             upsert_device(
                 conn,
                 row["id"],
@@ -869,6 +871,65 @@ class Handler(BaseHTTPRequestHandler):
                 + ("; Secure" if COOKIE_SECURE else "")
             )
         self._send_json({"ok": True}, extra_headers=headers)
+
+    def handle_sessions(self):
+        user = self._auth_user()
+        if user is None:
+            return self._error(401, "登录已失效，请重新登录")
+        with db_connect() as conn:
+            data = account_sessions.list_sessions(conn, user["id"], self._session_token(), now_iso())
+        self._send_json({"sessions": data})
+
+    def handle_revoke_session(self, session_id):
+        user = self._auth_user()
+        if user is None:
+            return self._error(401, "登录已失效，请重新登录")
+        if not account_sessions.SESSION_ID.fullmatch(session_id):
+            return self._error(404, "登录会话不存在")
+        try:
+            body_size = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._error(400, "请求无效")
+        if body_size > 4096:
+            return self._error(413, "请求内容过大")
+        password = body_text(self._read_body(), "password")
+        if not password or len(password) > 512:
+            return self._error(400, "请输入当前密码")
+        limiter_key = (user["id"], self._client_key())
+        attempt = _session_revoke_attempts.begin(limiter_key)
+        if attempt is None:
+            return self._error(429, "密码验证过于频繁，请15分钟后再试")
+        password_failed = False
+        try:
+            with db_connect() as conn:
+                # Authentication and target ownership are rechecked under one
+                # write transaction; a concurrent logout/reset cannot race it.
+                conn.execute("BEGIN IMMEDIATE")
+                current_token = self._session_token()
+                current = conn.execute(
+                    "SELECT u.* FROM tokens t JOIN users u ON u.id=t.user_id "
+                    "WHERE t.token=? AND t.user_id=? AND t.expires_at>? AND u.status=1",
+                    (current_token, user["id"], now_iso()),
+                ).fetchone()
+                if current is None:
+                    return self._error(401, "登录已失效，请重新登录")
+                if not verify_password(password, current["salt"], current["password_hash"]):
+                    password_failed = True
+                    return self._error(403, "当前密码不正确")
+                target = conn.execute(
+                    "SELECT token FROM tokens WHERE session_id=? AND user_id=? AND expires_at>?",
+                    (session_id, user["id"], now_iso()),
+                ).fetchone()
+                if target is None:
+                    return self._error(404, "登录会话不存在")
+                if hmac.compare_digest(target["token"], current_token):
+                    return self._error(409, "当前会话请使用退出本账号操作")
+                conn.execute("DELETE FROM tokens WHERE session_id=? AND user_id=?",
+                             (session_id, user["id"]))
+            self._send_json({"revoked": True})
+        finally:
+            password = ""
+            _session_revoke_attempts.finish(limiter_key, attempt, password_failed)
 
     def handle_peers(self):
         """登录账号下的设备列表（我的设备）。"""
@@ -1014,6 +1075,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_login_options()
         if path == "/api/peers" and method == "GET":
             return self.handle_peers()
+        if path == "/api/sessions" and method == "GET":
+            return self.handle_sessions()
+        if path.startswith("/api/sessions/") and path.endswith("/revoke") and method == "POST":
+            return self.handle_revoke_session(unquote(path[len("/api/sessions/"):-len("/revoke")]))
         if path.startswith("/api/peers/") and method == "DELETE":
             return self.handle_delete_device(unquote(path.rsplit("/", 1)[-1]))
 
