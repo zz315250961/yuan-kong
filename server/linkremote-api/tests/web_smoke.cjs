@@ -66,7 +66,7 @@ async function main() {
       headers: {'Content-Type': 'application/json', Authorization: `Bearer ${desktopToken}`},
       body: JSON.stringify({id: '123456789', uuid: 'office/device + 1'})});
     assert.equal(heartbeat.status, 200);
-    await nativeLogin({id: '987654321', uuid: 'android-test', deviceInfo: {os: 'android', name: '我的手机'}});
+    const androidToken = await nativeLogin({id: '987654321', uuid: 'android-test', deviceInfo: {os: 'android', name: '我的手机'}});
     await page.goto(`${base}/remote/manage`);
     await page.locator('#login-view').waitFor({state: 'visible'});
     const snapshots = process.env.LINKREMOTE_SCREENSHOT_DIR;
@@ -136,6 +136,25 @@ async function main() {
     await page.unroute('**/remote/api/peers');
     await page.locator('#refresh-devices').click();
     await page.getByText('设备列表已刷新', {exact: true}).waitFor();
+
+    // True login sessions are distinct from device records. Password stays
+    // request-local; revoking this synthetic phone does not delete its peer.
+    await page.locator('#refresh-sessions').click();
+    await page.locator('#session-list tr').filter({hasText: '我的手机'}).waitFor();
+    assert.equal(await page.locator('#session-list tr').filter({hasText: '当前会话'}).getByRole('button').count(), 0);
+    await page.locator('#session-list tr').filter({hasText: '我的手机'}).getByRole('button', {name: '退出登录', exact: true}).click();
+    const revokeForm = page.locator('#session-revoke-form');
+    await revokeForm.locator('[name=password]').fill('wrong');
+    await revokeForm.locator('[type=submit]').click();
+    await page.locator('#session-revoke-error').getByText('当前密码不正确', {exact: true}).waitFor();
+    assert.equal(await revokeForm.locator('[name=password]').inputValue(), '');
+    await revokeForm.locator('[name=password]').fill('secret1');
+    await revokeForm.locator('[type=submit]').click();
+    await page.getByText('所选登录会话已退出', {exact: true}).waitFor();
+    assert.equal(await page.locator('#session-list tr').filter({hasText: '我的手机'}).count(), 0);
+    assert.equal((await fetch(`${base}/api/sessions`, {headers: {Authorization: `Bearer ${androidToken}`}})).status, 401);
+    assert.equal((await fetch(`${base}/api/sessions`, {headers: {Authorization: `Bearer ${desktopToken}`}})).status, 200);
+    assert.equal(await page.locator('#device-list tr').filter({hasText: '987654321'}).count(), 1);
 
     // Encoded identifiers must reach the API intact.
     page.once('dialog', dialog => dialog.accept());
@@ -240,7 +259,7 @@ async function main() {
       await capture(`login-${width}`);
     }
     assert.deepEqual(pageErrors, []);
-    console.log('PASS: real Windows/Android login + late-ID heartbeat, iOS controller-only list, account-switch late 200/401 isolation, keyboard skip navigation, cookie login/logout, search/copy/delete/failure recovery, email/register/reset, 320–1440px overflow, no browser exceptions');
+    console.log('PASS: real login-session listing/current refusal/password-error clear/selected revoke with retained peer and other tokens; real Windows/Android login + late-ID heartbeat, iOS controller-only list, account-switch late 200/401 isolation, keyboard skip navigation, cookie login/logout, search/copy/delete/failure recovery, email/register/reset, 320–1440px overflow, no browser exceptions');
   } catch (error) {
     if (diagnosticPage && !diagnosticPage.isClosed()) {
       console.error('Browser failure state:', await diagnosticPage.evaluate(() => ({

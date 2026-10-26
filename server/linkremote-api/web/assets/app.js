@@ -9,6 +9,13 @@ let hasLoadedDevices = false;
 let accountEmail = '';
 let accountRequest = 0;
 let announcementTimer;
+const sessionList = document.querySelector('#session-list');
+const sessionError = document.querySelector('#session-error');
+const revokeDialog = document.querySelector('#session-revoke-dialog');
+const revokeForm = document.querySelector('#session-revoke-form');
+let sessionRequest = 0;
+let pendingRevoke = null;
+let revoking = false;
 
 function announce(message = '', isError = false) {
   window.clearTimeout(announcementTimer);
@@ -25,6 +32,12 @@ function showView(name, focus = true) {
     hasLoadedDevices = false;
     deviceList.replaceChildren();
     deviceCount.textContent = '';
+    ++sessionRequest;
+    sessionList.replaceChildren();
+    sessionError.textContent = '';
+    pendingRevoke = null;
+    revokeForm.reset();
+    if (revokeDialog.open) revokeDialog.close();
   }
   for (const view of views) view.hidden = view.dataset.view !== name;
   document.querySelectorAll('[data-dashboard-section]').forEach(button => {
@@ -152,7 +165,7 @@ function renderDevice(device) {
     }),
     actionButton('移除', async button => {
       const accountGeneration = accountRequest;
-      if (!window.confirm('从当前账号的设备列表移除此记录？客户端再次登录或同步账号时，设备可能重新出现。')) return;
+      if (!window.confirm('仅移除此登记记录，不等于退出账号。客户端再次登录或同步账号时，设备可能重新出现。确定移除？')) return;
       button.disabled = true;
       try {
         await request(`/remote/api/peers/${encodeURIComponent(device.uuid)}`, {method: 'DELETE'});
@@ -175,7 +188,7 @@ function renderDevice(device) {
     tableCell('系统', info.os || '未知'),
     tableCell('设备 ID', controllerOnly ? 'iOS 控制端（不提供被控 ID）' : device.id || '设备 ID 尚未就绪', 'device-id'),
     tableCell('状态', status),
-    tableCell('最近登录', formatDate(device.last_login)),
+    tableCell('最近同步', device.last_login ? formatDate(device.last_login) : '时间未知'),
     tableCell('操作', actions),
   );
   return row;
@@ -263,8 +276,82 @@ async function loadDashboard({initial = false} = {}) {
   document.querySelector('#account-email').textContent = email;
   document.querySelector('#user-menu').textContent = email.split('@')[0] || '账号';
   showView('dashboard');
-  await loadDevices();
+  await Promise.all([loadDevices(), loadSessions()]);
 }
+
+function renderSessions(sessions) {
+  sessionList.replaceChildren();
+  if (!sessions.length) {
+    const row = document.createElement('tr');
+    const cell = tableCell('登录设备', '暂无可显示的登录会话，请刷新重试');
+    cell.colSpan = 4; row.append(cell); sessionList.append(row); return;
+  }
+  for (const session of sessions) {
+    if (!/^[A-Za-z0-9_-]{22,64}$/.test(session.id) || typeof session.is_current !== 'boolean') throw new Error('登录会话数据无效');
+    const row = document.createElement('tr');
+    const description = `${session.device_name || '历史会话'} / ${session.platform || '设备信息未知'}`;
+    const action = document.createElement('span');
+    if (session.is_current) { action.className = 'current-session'; action.textContent = '当前会话'; }
+    else action.append(actionButton('退出登录', () => {
+      if (revoking) return;
+      pendingRevoke = {id: session.id, generation: accountRequest};
+      document.querySelector('#session-revoke-target').textContent = `${description} · 创建时间：${session.created_at || '未知'}`;
+      document.querySelector('#session-revoke-error').textContent = '';
+      revokeForm.reset(); revokeDialog.showModal(); revokeForm.elements.password.focus();
+    }));
+    row.append(tableCell('设备 / 平台', description),
+      tableCell('创建时间', session.created_at ? formatDate(session.created_at) : '时间未知'),
+      tableCell('最近使用', session.last_seen_at ? formatDate(session.last_seen_at) : '时间未知'), tableCell('操作', action));
+    sessionList.append(row);
+  }
+}
+async function loadSessions() {
+  const epoch = accountRequest;
+  const serial = ++sessionRequest;
+  const refresh = document.querySelector('#refresh-sessions');
+  refresh.disabled = true; sessionList.setAttribute('aria-busy', 'true'); sessionError.textContent = '';
+  try {
+    const result = await request('/remote/api/sessions');
+    if (epoch !== accountRequest || serial !== sessionRequest) return;
+    if (!Array.isArray(result.sessions)) throw new Error('登录会话列表无效');
+    renderSessions(result.sessions);
+  } catch (error) {
+    if (epoch === accountRequest && serial === sessionRequest) sessionError.textContent = `${error.message}；可点击“刷新登录设备”重试。`;
+  } finally {
+    if (epoch === accountRequest && serial === sessionRequest) {
+      refresh.disabled = false; sessionList.setAttribute('aria-busy', 'false');
+    }
+  }
+}
+document.querySelector('#refresh-sessions').addEventListener('click', loadSessions);
+function cancelRevoke() { if (!revoking) { pendingRevoke = null; revokeForm.reset(); revokeDialog.close(); } }
+document.querySelector('#cancel-session-revoke').addEventListener('click', cancelRevoke);
+revokeDialog.addEventListener('cancel', event => { event.preventDefault(); cancelRevoke(); });
+revokeForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const target = pendingRevoke;
+  if (revoking || !target || target.generation !== accountRequest) return;
+  let password = revokeForm.elements.password.value;
+  revokeForm.elements.password.value = '';
+  revoking = true;
+  revokeForm.querySelectorAll('button,input').forEach(element => { element.disabled = true; });
+  document.querySelector('#session-revoke-error').textContent = '';
+  try {
+    const result = await request(`/remote/api/sessions/${encodeURIComponent(target.id)}/revoke`, {
+      method: 'POST', body: JSON.stringify({password})});
+    if (target.generation !== accountRequest || pendingRevoke !== target) return;
+    if (result.revoked !== true) throw new Error('退出结果无效');
+    revokeDialog.close(); pendingRevoke = null;
+    await loadSessions();
+    if (target.generation === accountRequest) announce('所选登录会话已退出');
+  } catch (error) {
+    if (target.generation === accountRequest && pendingRevoke === target) document.querySelector('#session-revoke-error').textContent = error.message;
+  } finally {
+    password = '';
+    revoking = false;
+    revokeForm.querySelectorAll('button,input').forEach(element => { element.disabled = false; });
+  }
+});
 
 async function sendCode(buttonElement) {
   const purpose = buttonElement.dataset.sendCode;

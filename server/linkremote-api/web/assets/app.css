@@ -45,6 +45,12 @@ svg { width: 22px; height: 22px; flex-shrink: 0; fill: none; stroke: currentColo
 .sidebar-footer a:hover { color: var(--cobalt); }
 .sidebar-footer svg { width: 20px; height: 20px; }
 .mobile-header, .mobile-nav { display: none; }
+.session-heading { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; margin-top: 32px; }
+.session-heading p { color: var(--muted); max-width: 65ch; line-height: 1.6; }
+.session-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; border: 0; border-radius: 14px; padding: 24px; color: var(--ink); background: var(--surface); box-shadow: 0 12px 40px #11182730; }
+.session-dialog::backdrop { background: #11182766; }
+#session-error, #session-revoke-error { color: var(--danger); }
+.current-session { color: var(--cobalt-dark); font-weight: 650; }
 
 .management-content { min-width: 0; padding: 46px clamp(30px, 4.6vw, 76px); }
 .auth-view { min-height: calc(100vh - 92px); display: grid; grid-template-columns: minmax(320px, .9fr) minmax(340px, 480px); align-items: center; justify-content: center; gap: clamp(50px, 8vw, 130px); }

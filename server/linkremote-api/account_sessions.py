@@ -27,7 +27,12 @@ def init_session_schema(conn):
     for row in conn.execute("SELECT token FROM tokens WHERE session_id = ''").fetchall():
         conn.execute("UPDATE tokens SET session_id=? WHERE token=?",
                      (secrets.token_urlsafe(18), row[0]))
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_session_id ON tokens(session_id)")
+    index = conn.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_tokens_session_id'").fetchone()
+    if index is not None and "WHERE" not in index[0].upper():
+        conn.execute("DROP INDEX idx_tokens_session_id")
+    # Old API code does not populate the additive column. Multiple blank IDs
+    # must stay writable during a rolling cutover or code-only rollback.
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_session_id ON tokens(session_id) WHERE session_id <> ''")
 
 
 def _display_text(value, limit):

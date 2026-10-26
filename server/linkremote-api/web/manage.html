@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#f5f3ee">
   <title>设备与账号管理｜LinkRemote 远控</title>
   <link rel="icon" href="/remote/assets/app-icon.png">
-  <link rel="stylesheet" href="/remote/assets/app.css?v=20261019">
-  <script type="module" src="/remote/assets/app.js?v=20261019"></script>
+  <link rel="stylesheet" href="/remote/assets/app.css?v=20261026">
+  <script type="module" src="/remote/assets/app.js?v=20261026"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">跳转到主要内容</a>
@@ -104,7 +104,7 @@
 
           <div class="table-wrap">
             <table aria-label="账号已绑定设备">
-              <thead><tr><th scope="col">设备</th><th scope="col">系统</th><th scope="col">设备 ID</th><th scope="col">状态</th><th scope="col">最近登录</th><th scope="col">操作</th></tr></thead>
+              <thead><tr><th scope="col">设备</th><th scope="col">系统</th><th scope="col">设备 ID</th><th scope="col">状态</th><th scope="col">最近同步</th><th scope="col">操作</th></tr></thead>
               <tbody id="device-list" aria-live="polite"></tbody>
             </table>
           </div>
@@ -112,7 +112,7 @@
         </section>
 
         <section id="account-section" class="account-section" data-section="account">
-          <div class="section-heading"><h2>账号安全</h2><p>管理登录邮箱和密码。</p></div>
+          <div class="section-heading"><h2>我的账号</h2><p>管理登录邮箱、密码与真实登录会话。重置密码会使全部账号会话失效。</p></div>
           <dl class="account-details">
             <div><dt>邮箱</dt><dd id="account-email">—</dd><dd><button type="button" data-toggle-email>修改邮箱</button></dd></div>
             <div><dt>密码</dt><dd>••••••••••••</dd><dd><button type="button" data-show-view="reset">修改密码</button></dd></div>
@@ -127,12 +127,28 @@
             <label>当前密码<input name="password" type="password" autocomplete="current-password" required></label>
             <div class="inline-actions"><button class="primary" type="submit">确认修改</button><button class="quiet" type="button" data-toggle-email>取消</button></div>
           </form>
+          <div class="session-heading"><div><h2>登录设备</h2><p>账号登录与远控登记设备分开管理。退出账号会话不会主动断开已建立的远控连接。</p></div><button type="button" id="refresh-sessions">刷新登录设备</button></div>
+          <div class="table-wrap"><table aria-label="账号登录会话">
+            <thead><tr><th scope="col">设备 / 平台</th><th scope="col">创建时间</th><th scope="col">最近使用</th><th scope="col">操作</th></tr></thead>
+            <tbody id="session-list" aria-live="polite"></tbody>
+          </table></div>
+          <p id="session-error" role="status" aria-live="polite"></p>
         </section>
 
         <p class="scope-note">网页端仅用于账号与设备管理；远程控制请使用 Windows 或 Android 客户端。</p>
       </section>
     </main>
   </div>
+  <dialog id="session-revoke-dialog" class="session-dialog" aria-labelledby="session-revoke-title">
+    <form id="session-revoke-form" class="form-stack">
+      <h2 id="session-revoke-title">退出这台设备的账号登录？</h2>
+      <p id="session-revoke-target"></p>
+      <p>仅退出所选账号会话，不会主动断开已建立的远控连接。当前会话不能在此退出。</p>
+      <label>当前密码<input name="password" type="password" autocomplete="current-password" maxlength="512" required></label>
+      <p id="session-revoke-error" role="alert"></p>
+      <div class="inline-actions"><button class="quiet" type="button" id="cancel-session-revoke">取消</button><button class="primary" type="submit">确认退出</button></div>
+    </form>
+  </dialog>
   <div id="live-status" class="live-status" role="status" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>

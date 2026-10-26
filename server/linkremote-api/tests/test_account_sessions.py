@@ -1,9 +1,12 @@
 """Real temporary SQLite/HTTP session management; no production account actions."""
 import json
+from pathlib import Path
+import sys
 import threading
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests import test_api as existing
 
 app = existing.app
@@ -246,6 +249,17 @@ class LoginSessionApiTests(unittest.TestCase):
         self.assertTrue(entries[0]["is_current"])
         self.assertEqual(entries[0]["device_name"], "")
         self.assertNotEqual(entries[0]["id"], token)
+
+    def test_old_server_can_create_multiple_tokens_after_code_only_rollback(self):
+        user_id = self.seed_user("rollback@example.test")
+        with app.db_connect() as conn:
+            # This is the INSERT used by the actual pre-migration API, not the
+            # new create_session helper. Additive schema must remain writable.
+            for token in ("legacy-rollback-one", "legacy-rollback-two"):
+                conn.execute("INSERT INTO tokens(token,user_id,created_at,expires_at) VALUES (?,?,?,?)",
+                    (token, user_id, app.now_iso(), app.expires_in_iso(86400)))
+        app.init_db()
+        self.assertEqual(len(self.sessions("legacy-rollback-one")), 2)
 
 
 if __name__ == "__main__":
