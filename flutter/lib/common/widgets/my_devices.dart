@@ -8,23 +8,42 @@ import '../../models/platform_model.dart';
 import '../../utils/account_device_sync.dart';
 import 'dialog.dart';
 import 'remote_home_layout.dart';
+import 'desktop_movable_dialog.dart';
 
 Future<void> showMyDevicesDialog({bool readOnly = false}) async {
+  final contentKey = GlobalKey<_MyDevicesDialogContentState>();
   await gFFI.dialogManager.show((setState, close, context) {
+    final title = Text(readOnly
+        ? '${translate('My devices')} (${translate('Read-only')})'
+        : translate('My devices'));
+    final content = Column(mainAxisSize: MainAxisSize.min, children: [
+      if (readOnly)
+        const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text('只读模式：可查看和刷新设备列表；不能连接、复制 ID 或删除设备。')),
+      Flexible(
+          child: MyDevicesDialogContent(
+              key: contentKey, readOnly: readOnly, showRefresh: !isDesktop)),
+    ]);
+    if (isDesktop) {
+      return _MovableDevicesAlert(
+          title: Row(children: [
+            Expanded(child: title),
+            IconButton(
+                tooltip: translate('Refresh'),
+                icon: const Icon(Icons.refresh),
+                onPressed: () => contentKey.currentState?._load())
+          ]),
+          content: content,
+          onCancel: close,
+          actions: [
+            dialogButton(translate('Close'), onPressed: close, isOutline: true)
+          ]);
+    }
     return CustomAlertDialog(
-      title: Text(readOnly
-          ? '${translate('My devices')} (${translate('Read-only')})'
-          : translate('My devices')),
+      title: title,
       contentBoxConstraints: BoxConstraints(maxWidth: 360, maxHeight: 420),
-      content: readOnly
-          ? Column(mainAxisSize: MainAxisSize.min, children: [
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text('只读模式：可查看和刷新设备列表；不能连接、复制 ID 或删除设备。'),
-              ),
-              const Flexible(child: MyDevicesDialogContent(readOnly: true)),
-            ])
-          : const MyDevicesDialogContent(),
+      content: content,
       onCancel: close,
       actions: [
         dialogButton(translate('Close'), onPressed: close, isOutline: true),
@@ -33,11 +52,38 @@ Future<void> showMyDevicesDialog({bool readOnly = false}) async {
   }, clickMaskDismiss: true, backDismiss: true);
 }
 
+// OverlayDialogManager deliberately accepts CustomAlertDialog only. Keep that
+// contract and scope the alternate container to this one desktop dialog.
+class _MovableDevicesAlert extends CustomAlertDialog {
+  const _MovableDevicesAlert(
+      {required super.title,
+      required super.content,
+      required super.actions,
+      required super.onCancel});
+  @override
+  State<CustomAlertDialog> createState() => _MovableDevicesAlertState();
+}
+
+class _MovableDevicesAlertState extends State<CustomAlertDialog> {
+  @override
+  Widget build(BuildContext context) => DesktopMovableDialog(
+      title: widget.title!,
+      content: widget.content,
+      actions: widget.actions!,
+      onCancel: () => widget.onCancel?.call());
+}
+
 class MyDevicesDialogContent extends StatefulWidget {
-  const MyDevicesDialogContent({Key? key, this.readOnly = false})
+  const MyDevicesDialogContent(
+      {Key? key,
+      this.readOnly = false,
+      this.showRefresh = true,
+      this.embedded = false})
       : super(key: key);
 
   final bool readOnly;
+  final bool showRefresh;
+  final bool embedded;
 
   @override
   State<MyDevicesDialogContent> createState() => _MyDevicesDialogContentState();
@@ -174,7 +220,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
     if (uuid.isEmpty || _removing.contains(uuid)) return;
     CommonConfirmDialog(
       gFFI.dialogManager,
-      '${translate('Remove device')}：${name.isEmpty ? id : name}?',
+      '${translate('Remove device')}：${name.isEmpty ? id : name}?\n仅移除登记记录，不会退出账号；活跃客户端可能重新登记。',
       () async {
         if (!mounted ||
             generation != _loadGeneration ||
@@ -298,19 +344,23 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
               padding: const EdgeInsets.all(8),
               child: Text(gFFI.userModel.deviceSyncError.value,
                   style: Theme.of(context).textTheme.bodySmall)),
-        Align(
-          alignment: Alignment.centerRight,
-          child: IconButton(
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            visualDensity: VisualDensity.standard,
-            icon: const Icon(Icons.refresh, size: 20),
-            tooltip: translate('Refresh'),
-            onPressed: _removing.isEmpty ? _load : null,
+        if (widget.showRefresh)
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              visualDensity: VisualDensity.standard,
+              icon: const Icon(Icons.refresh, size: 20),
+              tooltip: translate('Refresh'),
+              onPressed: _removing.isEmpty ? _load : null,
+            ),
           ),
-        ),
         Flexible(
           child: ListView.builder(
             shrinkWrap: true,
+            primary: false,
+            physics:
+                widget.embedded ? const NeverScrollableScrollPhysics() : null,
             itemCount: _devices.length,
             itemBuilder: (context, i) {
               final d = _devices[i];
@@ -370,7 +420,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
                               style: Theme.of(context).textTheme.bodySmall),
                         if (lastLogin != null)
                           Text(
-                              '最近登录：${lastLogin.toLocal().toString().split('.').first}',
+                              '最近同步：${lastLogin.toLocal().toString().split('.').first}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodySmall),
