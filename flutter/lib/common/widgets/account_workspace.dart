@@ -276,15 +276,17 @@ class AccountWorkspace extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 6),
                           decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withOpacity(.10),
+                              color: Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? const Color(0xFF12304F)
+                                  : const Color(0xFFE8F1FF),
                               borderRadius: BorderRadius.circular(6)),
                           child: Text('当前会话',
                               style: TextStyle(
-                                  color:
-                                      Theme.of(context).colorScheme.primary)))
+                                  color: Theme.of(context).brightness ==
+                                          Brightness.dark
+                                      ? const Color(0xFFB6DBFF)
+                                      : const Color(0xFF1556A0))))
                     else
                       OutlinedButton(
                           onPressed: revokingId == null && !loading

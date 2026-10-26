@@ -26,6 +26,9 @@ TARGETS = ('app.py', 'account_sessions.py', 'web/manage.html', 'web/assets/app.j
 class DeploymentRolledBack(RuntimeError):
     pass
 
+class DeploymentRecoveryFailed(RuntimeError):
+    pass
+
 def identity(path):
     return {'size': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
 
@@ -67,11 +70,12 @@ def atomic_copy(source, target, mode=0o644):
 def restart_api():
     subprocess.run(['pm2','restart','linkremote-api'],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=25)
 
-def health_api():
+def check_health(require_sessions=True):
     for attempt in range(8):
         try:
             result=json.load(urllib.request.urlopen('http://127.0.0.1:21114/api/health',timeout=2))
             if result.get('ok') is not True: raise ValueError('Invalid health response')
+            if not require_sessions: return
             try:
                 urllib.request.urlopen('http://127.0.0.1:21114/api/sessions',timeout=2)
             except urllib.error.HTTPError as error:
@@ -81,7 +85,13 @@ def health_api():
             if attempt == 7: raise
             time.sleep(.5)
 
-def execute(base,stage,backup_root,*,restart=restart_api,health=health_api):
+def health_api():
+    check_health(True)
+
+def health_existing_api():
+    check_health(False)
+
+def execute(base,stage,backup_root,*,restart=restart_api,health=health_api,rollback_health=health_existing_api):
     base,stage,backup_root=Path(base),Path(stage),Path(backup_root)
     expected=preflight(base,stage)
     unchanged={name:identity(base/name) for name in ('smtp.json','release.json')}
@@ -128,9 +138,13 @@ def execute(base,stage,backup_root,*,restart=restart_api,health=health_api):
         for name in reversed(replaced):
             if expected[name]['old'] is not None: atomic_copy(backup/name,base/name)
             # A newly added, now unused module is retained, not destructively removed.
-        restart()
-        # The old API has no sessions route; verify its own health only.
-        raise DeploymentRolledBack('Code restored; additive DB retained; private backup: '+str(backup)) from error
+        try:
+            restart()
+            # Old code has no sessions route; require actual health, not only PM2.
+            rollback_health()
+        except Exception as recovery_error:
+            raise DeploymentRecoveryFailed('Recovery health not verified; private backup: '+str(backup)) from recovery_error
+        raise DeploymentRolledBack('Code restored and old API health verified; additive DB retained; private backup: '+str(backup)) from error
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--stage',required=True)

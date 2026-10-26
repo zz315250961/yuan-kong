@@ -12,6 +12,56 @@ String _freshIsolateRequestUrl() =>
 
 void main() {
   test(
+      'current heartbeat 401 expires only that account and next sync sends nothing',
+      () async {
+    var account =
+        const AccountDeviceSession('https://api.example.test', 'revoked');
+    var posts = 0;
+    var expired = 0;
+    final sync = AccountDeviceSync(
+        session: () async => account,
+        identity: () async => const AccountDeviceIdentity('123', 'install', {}),
+        post: (_, {headers, body}) async {
+          posts++;
+          return http.Response('{}', 401);
+        },
+        onUnauthorized: (expected) async {
+          expect(expected.token, 'revoked');
+          expired++;
+          account = const AccountDeviceSession('', '');
+        });
+    await expectLater(sync.sync(), throwsA(isA<http.ClientException>()));
+    await sync.sync();
+    expect(expired, 1);
+    expect(posts, 1);
+  });
+  for (final changeApi in [false, true]) {
+    test(
+        'late heartbeat 401 after ${changeApi ? 'API' : 'token'} switch cannot expire new account',
+        () async {
+      var account =
+          const AccountDeviceSession('https://api.example.test', 'old');
+      final pending = Completer<http.Response>();
+      var expired = 0;
+      final sync = AccountDeviceSync(
+          session: () async => account,
+          identity: () async =>
+              const AccountDeviceIdentity('123', 'install', {}),
+          post: (_, {headers, body}) => pending.future,
+          onUnauthorized: (_) async {
+            expired++;
+          });
+      final operation = sync.sync();
+      await Future<void>.delayed(Duration.zero);
+      account = changeApi
+          ? const AccountDeviceSession('https://new.example.test', 'old')
+          : const AccountDeviceSession('https://api.example.test', 'new');
+      pending.complete(http.Response('{}', 401));
+      await expectLater(operation, throwsA(isA<http.ClientException>()));
+      expect(expired, 0);
+    });
+  }
+  test(
       'missing native UUID uses one persistent installation UUID, never remote ID 0',
       () async {
     var saved = '';

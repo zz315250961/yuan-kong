@@ -66,7 +66,7 @@ class DeployTests(unittest.TestCase):
             calls.append(1)
             if len(calls)==1: raise RuntimeError('synthetic start failure')
         with self.assertRaises(deploy.DeploymentRolledBack):
-            deploy.execute(self.base,self.stage,self.backups,restart=fail_once,health=lambda: None)
+            deploy.execute(self.base,self.stage,self.backups,restart=fail_once,health=lambda: None,rollback_health=lambda: None)
         self.assertEqual(len(calls),2)
         self.assertTrue((self.base/'app.py').read_text().startswith('old payload'))
         with closing(sqlite3.connect(self.db)) as conn:
@@ -79,5 +79,17 @@ class DeployTests(unittest.TestCase):
         expected=json.loads((self.stage/'expected.json').read_text()); expected['smtp.json']=expected['app.py']
         (self.stage/'expected.json').write_text(json.dumps(expected))
         with self.assertRaises(ValueError): deploy.preflight(self.base,self.stage)
+    def test_code_rollback_requires_verified_old_api_health(self):
+        calls=[]
+        def new_health_failure(): raise RuntimeError('new health fails')
+        with self.assertRaises(deploy.DeploymentRolledBack):
+            deploy.execute(self.base,self.stage,self.backups,restart=lambda: None,
+                health=new_health_failure,rollback_health=lambda: calls.append('old-health-verified'))
+        self.assertEqual(calls,['old-health-verified'])
+    def test_successful_pm2_restart_but_failed_old_health_is_not_rollback_success(self):
+        def unhealthy(): raise RuntimeError('service unhealthy')
+        with self.assertRaises(deploy.DeploymentRecoveryFailed):
+            deploy.execute(self.base,self.stage,self.backups,restart=lambda: None,
+                health=unhealthy,rollback_health=unhealthy)
 
 if __name__=='__main__': unittest.main()

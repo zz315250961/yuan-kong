@@ -48,6 +48,7 @@ class UserModel {
   late final _deviceSync = AccountDeviceSync(
       session: accountDeviceSession,
       identity: _readAccountDevice,
+      onUnauthorized: _onAccountUnauthorized,
       post: (url, {headers, body}) =>
           http.post(url, headers: headers, body: body));
   late final accountSessions = AccountSessionClient(
@@ -55,11 +56,14 @@ class UserModel {
       get: (url, {headers}) => http.get(url, headers: headers),
       post: (url, {headers, body}) =>
           http.post(url, headers: headers, body: body),
-      onUnauthorized: (expected) async {
-        if (expected.matches(await accountDeviceSession())) {
-          await reset(resetOther: true);
-        }
-      });
+      onUnauthorized: _onAccountUnauthorized);
+
+  Future<void> _onAccountUnauthorized(AccountDeviceSession expected) async {
+    if (expected.matches(await accountDeviceSession())) {
+      // reset cancels this account's heartbeat/models, never native remote.
+      await reset(resetOther: true);
+    }
+  }
 
   Future<List<AccountLoginSession>> getLoginSessions(
           {required AccountDeviceSession expectedSession}) async =>

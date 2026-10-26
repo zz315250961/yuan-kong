@@ -67,6 +67,7 @@ class AccountDeviceSync {
       {required this.session,
       required this.identity,
       required this.post,
+      this.onUnauthorized,
       this.timeout = const Duration(seconds: 35),
       this.registrationWait = const Duration(seconds: 4)});
   final Duration timeout;
@@ -75,6 +76,7 @@ class AccountDeviceSync {
   final Future<AccountDeviceIdentity> Function() identity;
   final Future<http.Response> Function(Uri,
       {Map<String, String>? headers, Object? body}) post;
+  final Future<void> Function(AccountDeviceSession)? onUnauthorized;
   Future<void>? _pending;
   _DeviceSyncAttempt? _attempt;
 
@@ -127,6 +129,9 @@ class AccountDeviceSync {
           headers: headers, body: body);
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 401 && await _isCurrent(attempt)) {
+        await onUnauthorized?.call(account);
+      }
       throw http.ClientException(
           'Device registration HTTP ${response.statusCode}');
     }
@@ -151,7 +156,9 @@ class AccountDeviceSync {
     final response = await get(
         accountDeviceRequestUri(account.apiServer, '/api/peers'),
         headers: {'Authorization': 'Bearer ${account.token}'}).timeout(timeout);
-    return account.matches(await session().timeout(timeout)) ? response : null;
+    if (!account.matches(await session().timeout(timeout))) return null;
+    if (response.statusCode == 401) await onUnauthorized?.call(account);
+    return response;
   }
 
   Future<http.Response?> removePeer(
@@ -165,6 +172,8 @@ class AccountDeviceSync {
         accountDeviceRequestUri(
             account.apiServer, '/api/peers/${Uri.encodeComponent(uuid)}'),
         headers: {'Authorization': 'Bearer ${account.token}'}).timeout(timeout);
-    return account.matches(await session().timeout(timeout)) ? response : null;
+    if (!account.matches(await session().timeout(timeout))) return null;
+    if (response.statusCode == 401) await onUnauthorized?.call(account);
+    return response;
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/account_workspace.dart';
+import 'package:flutter_hbb/common.dart' show MyTheme;
 import 'package:flutter_hbb/models/account_login_session.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,6 +17,46 @@ const sessions = [
       isCurrent: false),
 ];
 void main() {
+  for (final dark in [false, true]) {
+    testWidgets('current-session label has 4.5 contrast dark=$dark',
+        (tester) async {
+      final theme = dark ? MyTheme.darkTheme : MyTheme.lightTheme;
+      await tester.pumpWidget(MaterialApp(
+          theme: theme,
+          home: Scaffold(
+              body: AccountWorkspace(
+                  accountLabel: 'synthetic',
+                  sessions: sessions,
+                  loading: false,
+                  error: '',
+                  revokingId: null,
+                  onLogin: () {},
+                  onRegister: () {},
+                  onChangeEmail: () {},
+                  onResetPassword: () {},
+                  onLogout: () {},
+                  onRefresh: () {},
+                  onRevoke: (_) {},
+                  remoteDevices: const SizedBox.shrink()))));
+      final label = tester.widget<Text>(find.text('当前会话'));
+      final container = tester.widget<Container>(find
+          .ancestor(
+              of: find.text('当前会话'),
+              matching: find.byWidgetPredicate((widget) =>
+                  widget is Container &&
+                  widget.decoration is BoxDecoration &&
+                  (widget.decoration as BoxDecoration).borderRadius ==
+                      BorderRadius.circular(6)))
+          .first);
+      final bg = Color.alphaBlend(
+          (container.decoration as BoxDecoration).color!,
+          theme.colorScheme.surface);
+      final fg = Color.alphaBlend(label.style!.color!, bg);
+      final values = [bg.computeLuminance(), fg.computeLuminance()]..sort();
+      expect((values.last + .05) / (values.first + .05),
+          greaterThanOrEqualTo(4.5));
+    });
+  }
   Widget workspace(
           {bool loggedIn = true, ValueChanged<AccountLoginSession>? revoke}) =>
       MaterialApp(
