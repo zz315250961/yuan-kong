@@ -11,12 +11,22 @@ import 'package:window_manager/window_manager.dart';
 // import 'package:flutter/services.dart';
 
 import '../../common/shared_state.dart';
+import 'desktop_main_tabs.dart';
+import 'desktop_my_page.dart';
 
 class DesktopTabPage extends StatefulWidget {
   const DesktopTabPage({Key? key}) : super(key: key);
 
   @override
   State<DesktopTabPage> createState() => _DesktopTabPageState();
+
+  static void onAddMy() {
+    final controller = Get.find<DesktopTabController>();
+    controller.add(buildDesktopMainTabs(
+            home: const SizedBox.shrink(),
+            my: const DesktopMyPage(key: ValueKey(kTabLabelMyPage)))
+        .last);
+  }
 
   static void onAddSetting(
       {SettingsTabKey initialPage = SettingsTabKey.general}) {
@@ -43,26 +53,11 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
   _DesktopTabPageState() {
     RemoteCountState.init();
     Get.put<DesktopTabController>(tabController);
-    tabController.add(TabInfo(
-        key: kTabLabelHomePage,
-        label: kTabLabelHomePage,
-        selectedIcon: Icons.home_sharp,
-        unselectedIcon: Icons.home_outlined,
-        closable: false,
-        page: DesktopHomePage(
-          key: const ValueKey(kTabLabelHomePage),
-        )));
-    // 桌面端默认同时展示「主页」和「设置」两个入口，无需再点右上角菜单
-    tabController.add(TabInfo(
-        key: kTabLabelSettingPage,
-        label: kTabLabelSettingPage,
-        selectedIcon: Icons.build_sharp,
-        unselectedIcon: Icons.build_outlined,
-        page: DesktopSettingPage(
-          key: const ValueKey(kTabLabelSettingPage),
-          initialTabkey: SettingsTabKey.general,
-        )));
-    // 默认显示主页，而不是刚添加的设置页
+    for (final tab in buildDesktopMainTabs(
+        home: const DesktopHomePage(key: ValueKey(kTabLabelHomePage)),
+        my: const DesktopMyPage(key: ValueKey(kTabLabelMyPage)))) {
+      tabController.add(tab);
+    }
     tabController.jumpTo(0, callOnSelected: false);
     if (bind.isIncomingOnly()) {
       tabController.onSelected = (key) {
@@ -111,9 +106,9 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
               tail: Offstage(
                 offstage: bind.isIncomingOnly() || bind.isDisableSettings(),
                 child: ActionIcon(
-                  message: 'Settings',
+                  message: '我的',
                   icon: IconFont.menu,
-                  onTap: DesktopTabPage.onAddSetting,
+                  onTap: DesktopTabPage.onAddMy,
                   isClose: false,
                 ),
               ),

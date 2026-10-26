@@ -106,6 +106,7 @@ class AccountSessionController extends ChangeNotifier {
   String? revokingId;
   bool _disposed = false;
   int _generation = 0;
+  int get revision => _generation;
   AccountDeviceSession? _loadedAccount;
 
   void clear() {
