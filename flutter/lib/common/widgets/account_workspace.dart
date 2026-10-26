@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/account_login_session.dart';
+import 'device_list_disclosure.dart';
 
 String accountSessionTime(DateTime? value) =>
     value == null ? '时间未知' : value.toLocal().toString().split('.').first;
@@ -66,6 +67,10 @@ class AccountWorkspace extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final signedIn = accountLabel.isNotEmpty;
+    final orderedSessions = [
+      ...sessions.where((s) => s.isCurrent),
+      ...sessions.where((s) => !s.isCurrent),
+    ];
     final theme = Theme.of(context);
     return ColoredBox(
         color: Color.alphaBlend(theme.colorScheme.onSurface.withOpacity(.035),
@@ -194,8 +199,21 @@ class AccountWorkspace extends StatelessWidget {
                                         const Padding(
                                             padding: EdgeInsets.all(16),
                                             child: Text('暂无可显示的登录会话，请刷新重试。')),
-                                      for (final session in sessions)
-                                        _sessionRow(context, session),
+                                      DeviceListDisclosure(
+                                          count: orderedSessions.length,
+                                          resetKey: Object.hash(
+                                              accountLabel,
+                                              orderedSessions
+                                                  .where((s) => s.isCurrent)
+                                                  .map((s) => s.id)
+                                                  .join('|')),
+                                          builder: (context, visibleCount) =>
+                                              Column(children: [
+                                                for (final session
+                                                    in orderedSessions
+                                                        .take(visibleCount))
+                                                  _sessionRow(context, session)
+                                              ])),
                                     ],
                                     action: IconButton(
                                         tooltip: '刷新登录设备',
@@ -260,8 +278,10 @@ class AccountWorkspace extends StatelessWidget {
                             children: [
                           Text(
                               session.deviceName.isEmpty
-                                  ? '历史会话'
+                                  ? '历史会话（未记录设备名称）'
                                   : session.deviceName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style:
                                   const TextStyle(fontWeight: FontWeight.w600)),
                           Text(session.platform.isEmpty

@@ -835,6 +835,8 @@ class Handler(BaseHTTPRequestHandler):
                 str(body.get("uuid") or ""),
                 body.get("deviceInfo") if isinstance(body.get("deviceInfo"), dict) else {},
             )
+            account_sessions.refresh_session_metadata(
+                conn, row["id"], self._session_token(), body, now_iso())
         self._send_json(user_to_payload(row))
 
     def handle_device_heartbeat(self):
@@ -855,6 +857,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, "设备登记信息无效，请重新登录后重试")
         with db_connect() as conn:
             upsert_device(conn, row["id"], device_id, uuid, info)
+            account_sessions.refresh_session_metadata(
+                conn, row["id"], self._session_token(), body, now_iso())
         self._send_json({"ok": True})
 
     def handle_logout(self, web_session=False):

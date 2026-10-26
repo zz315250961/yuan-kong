@@ -83,7 +83,7 @@ void main() {
     await tester.pumpWidget(workspace(revoke: (value) => target = value));
     expect(find.text('登录设备'), findsOneWidget);
     expect(find.text('当前会话'), findsOneWidget);
-    expect(find.text('历史会话'), findsOneWidget);
+    expect(find.text('历史会话（未记录设备名称）'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
     await tester.tap(find.text('退出登录'));
     expect(target?.id, 'synthetic-session-opaque-02');

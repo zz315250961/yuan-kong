@@ -62,6 +62,29 @@ def insert_session(conn, token, user_id, created_at, expires_at, metadata=None):
     )
 
 
+def refresh_session_metadata(conn, user_id, token, body, now):
+    """Display-only self-report for the presenting live session, never a peer join."""
+    uuid = body.get("uuid")
+    if not isinstance(uuid, str):
+        return
+    uuid = uuid.strip()
+    if uuid in ("", "0", "NA", "null", "unknown") or len(uuid) > 128:
+        return
+    metadata = session_metadata(body)
+    name, platform = metadata["device_name"], metadata["platform"]
+    if not name and not platform:
+        return
+    conn.execute(
+        "UPDATE tokens SET "
+        "device_name=CASE WHEN ?<>'' THEN ? ELSE device_name END, "
+        "platform=CASE WHEN ?<>'' THEN ? ELSE platform END, "
+        "device_uuid=CASE WHEN device_uuid='' THEN ? ELSE device_uuid END "
+        "WHERE token=? AND user_id=? AND expires_at>? "
+        "AND (device_uuid='' OR device_uuid=?)",
+        (name, name, platform, platform, uuid, token, user_id, now, uuid),
+    )
+
+
 def list_sessions(conn, user_id, current_token, now):
     rows = conn.execute(
         "SELECT session_id,device_name,platform,created_at,last_seen_at,token "

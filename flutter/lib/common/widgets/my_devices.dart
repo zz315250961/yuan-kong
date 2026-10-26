@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../common.dart';
 import '../../models/platform_model.dart';
 import '../../utils/account_device_sync.dart';
+import 'device_list_disclosure.dart';
 import 'dialog.dart';
 import 'remote_home_layout.dart';
 import 'desktop_movable_dialog.dart';
@@ -315,6 +316,8 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (isDesktop)
+              Text('共0台，显示0台', style: Theme.of(context).textTheme.bodySmall),
             Icon(Icons.devices,
                 size: 36, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 12),
@@ -336,9 +339,23 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
         ),
       );
     }
+    if (widget.embedded) {
+      return DeviceListDisclosure(
+          count: _devices.length,
+          unit: '台',
+          resetKey: _loadGeneration,
+          builder: (context, visibleCount) => _deviceList(visibleCount));
+    }
+    return _deviceList(_devices.length);
+  }
+
+  Widget _deviceList(int visibleCount) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (isDesktop && !widget.embedded)
+          Text('共${_devices.length}台，显示$visibleCount台',
+              style: Theme.of(context).textTheme.bodySmall),
         if (gFFI.userModel.deviceSyncError.value.isNotEmpty)
           Padding(
               padding: const EdgeInsets.all(8),
@@ -361,7 +378,7 @@ class _MyDevicesDialogContentState extends State<MyDevicesDialogContent> {
             primary: false,
             physics:
                 widget.embedded ? const NeverScrollableScrollPhysics() : null,
-            itemCount: _devices.length,
+            itemCount: visibleCount,
             itemBuilder: (context, i) {
               final d = _devices[i];
               final info = (d['info'] is Map<String, dynamic>)

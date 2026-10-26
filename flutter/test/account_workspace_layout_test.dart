@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart' show MyTheme;
 import 'package:flutter_hbb/common/widgets/account_workspace.dart';
+import 'package:flutter_hbb/common/widgets/device_list_disclosure.dart';
 import 'package:flutter_hbb/common/widgets/desktop_movable_dialog.dart';
 import 'package:flutter_hbb/common/widgets/remote_home_layout.dart';
 import 'package:flutter_hbb/models/account_login_session.dart';
@@ -14,17 +15,22 @@ const captureKey = ValueKey('account-workspace-capture');
 final captureDir = Platform.environment['LINKREMOTE_ACCOUNT_CAPTURE_DIR'];
 final captureFont = Platform.environment['LINKREMOTE_ACCOUNT_CAPTURE_FONT'];
 List<AccountLoginSession> sampleSessions() => [
-      for (var i = 0; i < 3; i++)
+      for (var i = 0; i < 8; i++)
         AccountLoginSession(
             id: 'synthetic-session-opaque-0$i',
-            deviceName: ['演示电脑', '演示手机', ''][i],
-            platform: ['Windows', 'Android', ''][i],
+            deviceName: i < 3 ? ['演示电脑', '演示手机', ''][i] : '演示设备 ${i + 1}',
+            platform: i == 0
+                ? 'Windows'
+                : i == 1
+                    ? 'Android'
+                    : '',
             isCurrent: i == 0,
             createdAt: DateTime.utc(2026, 10, 24, 1),
             lastSeenAt: i == 2 ? null : DateTime.utc(2026, 10, 25, 6, 30)),
     ];
-Widget sampleDevices() => Column(mainAxisSize: MainAxisSize.min, children: [
-      for (var i = 0; i < 2; i++)
+Widget sampleDevices({int count = 2}) =>
+    Column(mainAxisSize: MainAxisSize.min, children: [
+      for (var i = 0; i < count; i++)
         Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: DeviceDetailsLayout(
@@ -32,7 +38,7 @@ Widget sampleDevices() => Column(mainAxisSize: MainAxisSize.min, children: [
                 details: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(i == 0 ? '演示电脑（本机）' : '演示手机',
+                      Text(i == 0 ? '演示电脑（本机）' : '演示手机 $i',
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                       Text(i == 0 ? '123 456 789' : '987 654 321'),
                       const Text('最近同步：10月25日 14:28',
@@ -113,11 +119,21 @@ void main() {
                         onRefresh: () {},
                         onRevoke: (_) {},
                         onSettings: () {},
-                        remoteDevices: sampleDevices())))));
+                        remoteDevices: DeviceListDisclosure(
+                            count: 8,
+                            unit: '台',
+                            resetKey: 'synthetic',
+                            builder: (_, visible) =>
+                                sampleDevices(count: visible)))))));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         await capture(
             tester, 'my-${size.width.toInt()}-${dark ? 'dark' : 'light'}');
+        await tester.ensureVisible(find.text('共8台，显示5台'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await capture(tester,
+            'remote-count-${size.width.toInt()}-${dark ? 'dark' : 'light'}');
         await tester.ensureVisible(find.text('设置'));
         expect(tester.getRect(find.text('设置')).bottom, lessThan(size.height));
         expect(tester.takeException(), isNull);

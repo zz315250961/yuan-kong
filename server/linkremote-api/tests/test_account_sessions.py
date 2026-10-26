@@ -68,6 +68,56 @@ class LoginSessionApiTests(unittest.TestCase):
         for secret in (current, other, outsider, "secret1", "password_hash", "device_uuid"):
             self.assertNotIn(secret, rendered)
 
+    def test_heartbeat_names_only_the_presenting_legacy_session_without_changing_credentials(self):
+        current, user_id = self.seed_session("one@example.test")
+        other, _ = self.seed_session("one@example.test")
+        foreign, _ = self.seed_session("two@example.test")
+        with app.db_connect() as conn:
+            before = [tuple(r) for r in conn.execute("SELECT token,user_id,session_id,created_at,expires_at FROM tokens ORDER BY token")]
+        status, _, _ = self.request("POST", "/api/heartbeat", {
+            "id": "123456789", "uuid": "own-installation",
+            "deviceInfo": {"name": "  Office\n Laptop ", "os": "windows"},
+        }, self.auth(current))
+        self.assertEqual(status, 200)
+        entries = self.sessions(current)
+        own = next(entry for entry in entries if entry["is_current"])
+        self.assertEqual((own["device_name"], own["platform"]), ("Office Laptop", "windows"))
+        self.assertEqual(next(entry for entry in entries if not entry["is_current"])["device_name"], "")
+        self.assertEqual(self.sessions(foreign)[0]["device_name"], "")
+        with app.db_connect() as conn:
+            after = [tuple(r) for r in conn.execute("SELECT token,user_id,session_id,created_at,expires_at FROM tokens ORDER BY token")]
+            self.assertEqual(conn.execute("SELECT device_uuid FROM tokens WHERE token=?", (current,)).fetchone()[0], "own-installation")
+        self.assertEqual(before, after)
+
+    def test_current_user_fallback_also_names_the_presenting_session(self):
+        current, _ = self.seed_session("one@example.test")
+        status, _, _ = self.request("POST", "/api/currentUser", {
+            "id": "123456789", "uuid": "own-installation",
+            "deviceInfo": {"name": "Existing laptop", "os": "windows"},
+        }, self.auth(current))
+        self.assertEqual(status, 200)
+        self.assertEqual(self.sessions(current)[0]["device_name"], "Existing laptop")
+
+    def test_heartbeat_can_rename_same_installation_but_not_erase_or_reattribute(self):
+        token = self.login("one@example.test", name="Before", uuid="installation-a")
+        def heartbeat(uuid, info):
+            return self.request("POST", "/api/heartbeat", {"id":"123456789", "uuid":uuid,"deviceInfo":info}, self.auth(token))[0]
+        self.assertEqual(heartbeat("installation-a", {"name":"Renamed", "os":"windows"}), 200)
+        self.assertEqual(self.sessions(token)[0]["device_name"], "Renamed")
+        self.assertEqual(heartbeat("installation-a", {"name":"", "os":""}), 200)
+        self.assertEqual((self.sessions(token)[0]["device_name"], self.sessions(token)[0]["platform"]), ("Renamed", "windows"))
+        self.assertEqual(heartbeat("installation-b", {"name":"Wrong installation", "os":"android"}), 200)
+        self.assertEqual((self.sessions(token)[0]["device_name"], self.sessions(token)[0]["platform"]), ("Renamed", "windows"))
+
+    def test_readonly_list_does_not_guess_names_from_registered_peers(self):
+        token, owner = self.seed_session("one@example.test")
+        with app.db_connect() as conn:
+            app.upsert_device(conn, owner, "123456789", "unrelated-installation", {"name":"Do not infer", "os":"windows"})
+        entry = self.sessions(token)[0]
+        self.assertEqual((entry["device_name"], entry["platform"]), ("", ""))
+        with app.db_connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0], 1)
+
     def test_revoke_only_selected_noncurrent_session_and_keep_other_tokens(self):
         current = self.login("one@example.test", uuid="install-a")
         target = self.login("one@example.test", uuid="install-b")
