@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T12:42:35+08:00",
+  "title": "Design System: LinkRemote Native Account Workspace",
+  "extensions": {
+    "platform": {
+      "target": "Flutter desktop account workspace",
+      "mode": "scan",
+      "authority": "Existing native theme and approved A+B+C combination",
+      "units": "Frontmatter px represents Flutter logical pixels, not device pixels.",
+      "scope": "AccountWorkspace, DesktopMovableDialog and desktop main tabs only; separate Web app.css identity unchanged.",
+      "rendering": "HTML/CSS below are illustrative documentary translations for a shadow-DOM panel. They do not render Dart, emulate native behavior, or establish installed-app acceptance.",
+      "evidence": [
+        ".impeccable/review/native-fix-verdict/my-1280-light.png",
+        ".impeccable/review/native-fix-verdict/my-1280-dark.png",
+        ".impeccable/review/native-round2/dialog-700-light.png",
+        ".impeccable/review/native-round2/dialog-700-dark.png"
+      ],
+      "acceptanceLimit": "Native rendering with synthetic account data; no installed-client, hardware, or Web numeric-gate claim.",
+      "runtimeRoles": {
+        "accountSection": "Theme.of(context).colorScheme.surface",
+        "workspaceBackground": "Color.alphaBlend(onSurface.withOpacity(.035), surface)",
+        "movableDialog": "Theme.of(context).colorScheme.surface",
+        "error": "Theme.of(context).colorScheme.error"
+      },
+      "contrast": [
+        { "component": "current-session-light", "ratio": 6.43 },
+        { "component": "current-session-dark", "ratio": 9.33 }
+      ]
+    },
+    "colorMeta": {
+      "action-blue": { "role": "primary", "displayName": "操作蓝" },
+      "material-primary": { "role": "primary", "displayName": "Material 主蓝" },
+      "current-session-light-bg": { "role": "primary", "displayName": "明亮当前会话背景" },
+      "current-session-dark-bg": { "role": "primary", "displayName": "暗色当前会话背景" }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "主题标题", "purpose": "Existing Flutter/system font resolution; no replacement font family specified." },
+      "section-title": { "displayName": "分区标题", "purpose": "titleLarge with weight 600." }
+    },
+    "nativeElevation": [
+      { "name": "movable-dialog", "value": 12, "purpose": "Flutter Material elevation; no normative CSS shadow equivalent." },
+      { "name": "theme-dialog", "value": 15, "purpose": "Existing Flutter DialogTheme elevation." }
+    ],
+    "breakpoints": [
+      { "name": "account-content-wide", "value": "760 logical px (local LayoutBuilder constraints)" }
+    ],
+    "nativeBehavior": {
+      "dialogSize": "min(570, maxWidth - 32) by min(560, maxHeight - 32), floored at zero",
+      "dialogMovement": "Header only; clamp position to current window bounds on drag and layout.",
+      "keyboard": "Escape cancels; closedLoop FocusScope and FocusTraversalGroup.",
+      "scroll": "Workspace SingleChildScrollView; dialog header/footer outside expanded content.",
+      "motion": "Desktop theme disables splash/highlight; no added animation tokens extracted."
+    }
+  },
+  "components": [
+    {
+      "name": "登录按钮（明亮主题文档示意）",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Illustrative HTML translation; Flutter ElevatedButton owns actual metrics and states.",
+      "html": "<button class=\"ds-login\">登录</button>",
+      "css": ".ds-login{background:#0071FF;color:white;border:0;border-radius:8px;padding:8px 16px;font:inherit}.ds-login:hover{filter:brightness(.96)}.ds-login:focus-visible{outline:2px solid currentColor;outline-offset:2px}.ds-login:active{filter:brightness(.92)}"
+    },
+    {
+      "name": "退出登录按钮（明亮主题文档示意）",
+      "kind": "button",
+      "refersTo": "button-outlined-light",
+      "description": "Illustrative only; browser hover/focus and padding are preview affordances, not extracted native tokens.",
+      "html": "<button class=\"ds-revoke\">退出登录</button>",
+      "css": ".ds-revoke{background:#EFEFF2;color:rgba(0,0,0,.87);border:1px solid #ccc;border-radius:8px;padding:8px 12px;font:inherit}.ds-revoke:hover{background:#E0E0E0}.ds-revoke:focus-visible{outline:2px solid currentColor;outline-offset:2px}.ds-revoke:disabled{opacity:.5}"
+    },
+    {
+      "name": "当前会话（两种主题文档示意）",
+      "kind": "chip",
+      "refersTo": "current-session-light",
+      "description": "Noninteractive native status badge; two extracted theme color pairs.",
+      "html": "<span class=\"ds-current\">当前会话</span> <span class=\"ds-current ds-current-dark\">当前会话</span>",
+      "css": ".ds-current{display:inline-block;background:#E8F1FF;color:#1556A0;border-radius:6px;padding:6px 8px;font:14px sans-serif}.ds-current-dark{background:#12304F;color:#B6DBFF}"
+    },
+    {
+      "name": "分区容器（明亮主题文档示意）",
+      "kind": "card",
+      "refersTo": "account-section",
+      "description": "Illustrative light surface, not a replacement for runtime colorScheme.surface.",
+      "html": "<section class=\"ds-section\"><h2 class=\"ds-section-title\">登录设备</h2><p>管理账号登录，不会断开已建立的远控连接。</p></section>",
+      "css": ".ds-section{background:white;color:rgba(0,0,0,.87);border-radius:12px;padding:16px;font:14px sans-serif}.ds-section-title{font-size:19px;font-weight:600;margin:0 0 12px}.ds-section p{margin:0}"
+    },
+    {
+      "name": "密码输入（文档示意）",
+      "kind": "input",
+      "description": "Illustrative browser field; native Flutter owns actual label, focus and validation rendering.",
+      "html": "<label class=\"ds-password-label\">当前密码 <input class=\"ds-password\" type=\"password\" autocomplete=\"off\"></label>",
+      "css": ".ds-password-label{font:14px sans-serif;color:rgba(0,0,0,.87)}.ds-password{display:block;background:#EFEFF2;border:1px solid #777;border-radius:8px;padding:8px;font:inherit}.ds-password:hover{border-color:#2196F3}.ds-password:focus-visible{outline:2px solid #2196F3;outline-offset:1px}"
+    },
+    {
+      "name": "双主页面（结构文档示意）",
+      "kind": "nav",
+      "description": "Labels only; tab dimensions and browser focus styling here are illustrative, not an extracted native tab replica.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主页面\"><button>远程控制</button><button aria-current=\"page\">我的</button></nav>",
+      "css": ".ds-nav{display:flex;gap:8px}.ds-nav button{font:14px sans-serif;padding:8px 12px;background:#EFEFF2;border:1px solid #ccc;border-radius:8px;color:rgba(0,0,0,.87)}.ds-nav button[aria-current]{color:#0071FF}.ds-nav button:hover{background:#E0E0E0}.ds-nav button:focus-visible{outline:2px solid #2196F3;outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "既有原生桌面工作区",
+    "overview": "本记录描述已构建的 Flutter 桌面“我的”与设备快捷弹框，沿用 LinkRemote 的蓝色操作、系统文字和明暗主题。它是既有产品语言的功能扩展，采用用户批准的 A 紧凑账号摘要、B 通栏列表、C 明确概念区分组合；上述名称是记录用描述，不是新品牌定位。\n\n范围依据 `flutter/lib/common.dart`、`common/widgets/account_workspace.dart`、`common/widgets/desktop_movable_dialog.dart` 及桌面主标签源码。`PRODUCT.md` 和 `docs/superpowers/specs/2026-10-25-account-workspace-design.md` 提供产品与批准边界，实际数值以当前实现为准。Web 账号应用保留独立 `app.css` 身份，本文件不将原生样式强加到 Web。",
+    "keyCharacteristics": [
+      "紧凑账号摘要与通栏分区，账号登录和远控登记分别表达。",
+      "蓝色操作强调、主题表面与细分隔线，避免品牌替换。",
+      "窄窗纵向滚动，弹框标题拖动与内容滚动分工明确。"
+    ],
+    "rules": [],
+    "dos": [
+      "**Do** 沿用原生明暗主题、系统文字与蓝色操作角色。",
+      "**Do** 将登录会话与远控登记分开，保留作用说明与未知信息文案。",
+      "**Do** 保留窄窗换行、页面/正文滚动、可达的弹框关闭区和键盘焦点边界。"
+    ],
+    "donts": [
+      "**Don't** 把主题 surface、scaffold 和 cardColor 当作同一背景。",
+      "**Don't** 用合成原生截图或 sidecar 示意组件声称已安装客户端、真机或 Web 数值验收通过。",
+      "**Don't** 将本次原生工作区记录扩张为品牌重设或 Web `app.css` 重写。"
+    ]
+  }
+}
